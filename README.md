@@ -1,6 +1,6 @@
-## 自动 SSL 证书续签 (CertGuard V3 - 多服务器版)
+## 自动 SSL 证书续签 (CertGuard V4 - 混合密钥版)
 
-本项目包含一个 GitHub Actions 工作流，用于自动检查并续签部署在**多台远程服务器**上的 SSL 证书。它利用**矩阵策略 (Matrix Strategy)** 为您定义的每台服务器并行执行检查任务。
+本项目包含一个 GitHub Actions 工作流，用于自动检查并续签部署在**多台远程服务器**上的 SSL 证书。它利用**矩阵策略 (Matrix Strategy)** 为您定义的每台服务器并行执行检查任务，并支持**共享密钥**与**独立密钥**的混合使用。
 
 工作流在每台服务器上支持两种操作模式：
 - **单域名模式**：在服务器配置中提供 `domain` 时激活，仅检查该特定域名。
@@ -13,52 +13,45 @@
 
 ### 如何设置 GitHub Secrets
 
-新版工作流使用两个核心 Secrets：`SSH_TARGETS` (JSON格式) 和 `SSH_KEY`。
+新版工作流采用高度灵活的密钥管理策略，使用 `SSH_TARGETS` 和一个可选的 `SSH_KEY` Secret。
 
 1.  在你的 GitHub 仓库页面，点击 **Settings** > **Secrets and variables** > **Actions**。
-2.  创建以下两个 Secrets：
+2.  创建以下 Secrets：
 
-#### 1. `SSH_KEY`
-*   **内容**: 用于登录所有目标服务器的 SSH 私钥。假设所有服务器共用一个密钥。
+#### 1. `SSH_KEY` (可选的全局共享密钥)
+*   **内容**: 一个全局共享的 SSH 私钥。当 `SSH_TARGETS` 中的服务器对象**未**提供自己的 `ssh_key` 时，将默认使用此密钥。
 *   **示例**: `-----BEGIN OPENSSH PRIVATE KEY...`
 
-#### 2. `SSH_TARGETS`
-*   **内容**: 一个 JSON 数组，其中每个对象代表一台服务器的完整配置。
+#### 2. `SSH_TARGETS` (必需，服务器定义列表)
+*   **内容**: 一个 JSON 数组，其中每个对象代表一台服务器的完整配置。您可以在这里为特定服务器内联其独立的 SSH 私钥。
 *   **示例**:
     ```json
     [
       {
-        "name": "WebApp Server 1 (Certbot)",
+        "name": "WebApp (使用全局共享密钥)",
         "host": "192.0.2.1",
         "user": "deployer1",
-        "port": 22,
-        "domain": "app1.example.com",
         "renew_cmd": "sudo certbot renew --quiet",
-        "reload_cmd": "sudo systemctl reload nginx",
-        "cert_path": "/etc/letsencrypt/live/app1.example.com/fullchain.pem"
+        "reload_cmd": "sudo systemctl reload nginx"
       },
       {
-        "name": "API Server 2 (acme.sh)",
+        "name": "API Server (使用独立密钥)",
         "host": "192.0.2.2",
         "user": "deployer2",
-        "domain": "",
-        "renew_cmd": "~/.acme.sh/acme.sh --renew-all --quiet",
+        "renew_cmd": "~/.acme.sh/acme.sh --renew-all",
         "reload_cmd": "sudo systemctl reload apache2",
-        "cert_scan_path": "/home/deployer2/.acme.sh"
+        "ssh_key": "-----BEGIN OPENSSH PRIVATE KEY-----\n...your private key content...\n-----END OPENSSH PRIVATE KEY-----"
       }
     ]
     ```
 
 *   **JSON 字段说明**:
-    *   `name`: (必需) 服务器的易读名称，将显示在 Actions 日志中。
-    *   `host`: (必需) 服务器 IP 或域名。
-    *   `user`: (必需) SSH 用户名。
-    *   `renew_cmd`: (必需) 在该服务器上执行的续签命令。
-    *   `reload_cmd`: (必需) 在该服务器上执行的服务重载命令。
-    *   `port`: (可选) SSH 端口，默认为 `22`。
-    *   `domain`: (可选) 填入域名激活**单域名模式**；留空 (`""`) 激活**全盘扫描模式**。
-    *   `cert_path`: (可选) 在**单域名模式**下，指定证书文件的绝对路径以供直接读取。
-    *   `cert_scan_path`: (可选) 在**全盘扫描模式**下，指定存放证书的根目录。默认为 `/etc/letsencrypt/live`。
+    *   `name`, `host`, `user`, `renew_cmd`, `reload_cmd`: (必需) 服务器基础信息和命令。
+    *   `ssh_key`: (可选) **服务器独立密钥**。如果提供，则**仅对此服务器**使用该密钥。如果省略，则此服务器将使用全局的 `SSH_KEY` Secret。
+    *   `port`, `domain`, `cert_path`, `cert_scan_path`: (可选) 其他精细化配置。
+
+> **⚠️ 重要提示：内联 `ssh_key` 的格式**
+> 由于 JSON 字符串不支持原生多行文本，您在 `ssh_key` 字段中粘贴私钥时，必须将所有的**换行符**手动替换为 `\n`，使其成为一个符合 JSON 规范的单行字符串。
 
 ### 如何选择 `certbot` 与 `acme.sh`
 
@@ -67,15 +60,13 @@
 | **Certbot** | - 官方推荐，社区支持好<br>- 与 Nginx/Apache 插件集成度高<br>- 通常由系统包管理器安装，易于管理 | - 可能需要 root 权限<br>- 依赖 Python 环境 | 续签时通常需要开放 **80 端口** 以完成 `http-01` 质询。 |
 | **acme.sh** | - 单个 Shell 脚本，无依赖<br>- 无需 root 权限即可运行<br>- 支持海量 DNS API，便于签发泛域名证书 | - 社区相对较小<br>- 配置方式与 Certbot 不同 | 同样，`http-01` 质询需要开放 **80 端口**。若使用 `dns-01` 质询则无此要求。 |
 
-**建议**：如果你的环境简单且有 root 权限，`certbot` 是一个稳妥的选择。如果你需要更强的灵活性、希望在非 root 用户下操作或使用 DNS 验证，`acme.sh` 是绝佳选择。
-
 ### 常见错误排查
 
 如果 Actions 失败，请检查以下几点：
 
 1.  **SSH 连接失败**：
     *   `host`, `user` 是否正确？
-    *   `SSH_KEY` 是否为完整的、正确的 OpenSSH 格式私钥？
+    *   使用的 `ssh_key` (无论是独立的还是共享的) 是否正确、完整且有权访问服务器？
     *   服务器防火墙是否允许来自 GitHub Actions Runner IP 地址的 SSH 连接？
 
 2.  **无法获取证书日期** (`openssl s_client` 失败)：
@@ -104,6 +95,3 @@
     ```sh
     openssl x509 -enddate -noout -in /etc/letsencrypt/live/example.com/fullchain.pem
     ```
-
-*   **SAN/多域名证书说明**：
-    `openssl s_client` 的 `-servername` 参数用于处理 SNI (服务器名称指示)。对于一张包含多个域名的 SAN 证书，只需指定主域名进行检测即可获取整张证书的信息。本方案已默认支持此场景。
