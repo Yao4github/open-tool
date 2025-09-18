@@ -1,11 +1,10 @@
 # .github/workflows/check-renew-ssl.yml
 #
-# 自动化 SSL 证书检查与续签工作流 (V2 - 支持全盘扫描)
-# 模式1: 若提供 DOMAIN, 则检查该特定域名。
-# 模式2: 若不提供 DOMAIN, 则扫描指定路径下所有证书, 找出最快过期的来判断。
+# 自动化 SSL 证书检查与续签工作流 (V3 - 支持多服务器矩阵)
+# 通过在 `SSH_TARGETS` Secret 中定义的 JSON 数组，为每台服务器并行创建一个任务。
 # ==============================================================================
 
-name: 'CertGuard: Check & Renew SSL Certificate'
+name: 'CertGuard: Check & Renew SSL Certificates'
 
 on:
   # 1. 定时触发：每日凌晨 3:00 (UTC) 执行
@@ -28,16 +27,25 @@ on:
 
 jobs:
   check-and-renew:
-    name: 'Check SSL Certificate(s)'
+    # 使用矩阵策略为 `SSH_TARGETS` 中的每个对象并行运行一个任务
+    strategy:
+      fail-fast: false # 确保一个任务的失败不会取消矩阵中的其他任务
+      matrix:
+        # fromJSON 函数将 Secrets 中的 JSON 字符串解析为可用的对象
+        target: ${{ fromJSON(secrets.SSH_TARGETS) }}
+
+    # 任务名称现在是动态的，以服务器名称命名，更清晰
+    name: 'Check SSL on ${{ matrix.target.name }}'
     runs-on: ubuntu-latest
     
     steps:
       - name: 'Step 1: Print Job Information'
         run: |
-          if [ -n "${{ secrets.DOMAIN }}" ]; then
-            echo "🚀 Starting SSL certificate check for a single domain: ${{ secrets.DOMAIN }}"
+          echo "🚀 Starting SSL certificate check for server: ${{ matrix.target.name }} (${{ matrix.target.host }})"
+          if [ -n "${{ matrix.target.domain }}" ]; then
+            echo "🔎 Mode: Single Domain (${{ matrix.target.domain }})"
           else
-            echo "🚀 Starting scan for all SSL certificates..."
+            echo "🔎 Mode: All Domains Scan"
           fi
           echo "⏰ Triggered by: ${{ github.event_name }}"
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
@@ -50,32 +58,33 @@ jobs:
       - name: 'Step 2: Execute Check & Renew Script via ssh-action'
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ secrets.SSH_HOST }}
-          username: ${{ secrets.SSH_USER }}
-          key: ${{ secrets.SSH_KEY }}
-          port: 22 # 可根据需要修改
+          # 从矩阵中使用目标服务器的主机、用户等信息
+          host: ${{ matrix.target.host }}
+          username: ${{ matrix.target.user }}
+          key: ${{ secrets.SSH_KEY }} # 假设所有服务器共用一个 SSH Key
+          port: ${{ matrix.target.port || 22 }}
           script: |
-            # 将远程脚本内容写入临时文件
+            # 脚本执行部分保持不变
             cat > /tmp/remote_check_and_renew.sh << 'EOF'
             ${{ env.REMOTE_SCRIPT }}
             EOF
             
-            # 赋予执行权限并执行
             chmod +x /tmp/remote_check_and_renew.sh
             /tmp/remote_check_and_renew.sh
 
         env:
-          # 将 GitHub Secrets 和 Inputs 作为环境变量传递给远程脚本
-          DOMAIN: ${{ secrets.DOMAIN || '' }}
-          CERT_PORT: ${{ secrets.CERT_PORT || '443' }}
-          RENEW_CMD: ${{ secrets.RENEW_CMD }}
-          RELOAD_CMD: ${{ secrets.RELOAD_CMD }}
-          CERT_PATH: ${{ secrets.CERT_PATH || '' }}
-          CERT_SCAN_PATH: ${{ secrets.CERT_SCAN_PATH || '/etc/letsencrypt/live' }} # 新增: 全盘扫描路径
-          # 根据触发方式确定参数
+          # 使用矩阵中的值作为环境变量传递给远程脚本
+          DOMAIN: ${{ matrix.target.domain || '' }}
+          CERT_PORT: ${{ matrix.target.port || '443' }}
+          RENEW_CMD: ${{ matrix.target.renew_cmd }}
+          RELOAD_CMD: ${{ matrix.target.reload_cmd }}
+          CERT_PATH: ${{ matrix.target.cert_path || '' }}
+          CERT_SCAN_PATH: ${{ matrix.target.cert_scan_path || '/etc/letsencrypt/live' }}
+          
           RENEW_THRESHOLD_DAYS: ${{ github.event.inputs.renew_threshold_days || '10' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-          # 将下面的远程脚本内容注入到环境变量
+          
+          # 远程脚本本身无需更改，因为它已完全参数化
           REMOTE_SCRIPT: |
             #!/bin/bash
             #
