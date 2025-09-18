@@ -1,7 +1,7 @@
 # .github/workflows/check-renew-ssl.yml
 #
-# 自动化 SSL 证书检查与续签工作流 (V6 - 最终修正版)
-# 采用两阶段任务(two-job)模式，正确地将 secret 解析为动态矩阵。
+# 自动化 SSL 证书检查与续签工作流 (V7 - 最终修正版)
+# 采用 heredoc 语法解决 setup 任务中的 shell 引用问题。
 # ==============================================================================
 
 name: 'CertGuard: Check & Renew SSL Certificates'
@@ -32,15 +32,17 @@ jobs:
     steps:
       - name: Set matrix json from secret
         id: set-matrix
-        run: echo "matrix_json=${{ secrets.SSH_TARGETS }}" >> $GITHUB_OUTPUT
+        # 使用 heredoc 语法来安全地处理包含特殊字符的 secret
+        run: |
+          cat <<EOF >> $GITHUB_OUTPUT
+          matrix_json=${{ secrets.SSH_TARGETS }}
+          EOF
 
   # 任务二：执行检查
   check-and-renew:
-    # 必须等待 setup 任务成功完成
     needs: setup
     strategy:
       fail-fast: false
-      # 从 setup 任务的输出中安全地读取和解析 JSON
       matrix:
         target: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
