@@ -1,85 +1,62 @@
-## 自动 SSL 证书续签 (CertGuard - 最终稳定版)
+## 自动 SSL 证书续签 (CertGuard - 智能自适应最终版)
 
-本项目包含一个 GitHub Actions 工作流，用于自动检查并续签部署在**多台远程服务器**上的 SSL 证书。它利用**矩阵策略 (Matrix Strategy)** 为您定义的每台服务器并行执行检查任务，并使用一个**共享的 SSH 密钥**进行连接。
+本项目包含一个 GitHub Actions 工作流，用于自动检查并续签部署在**多台远程服务器**上的 SSL 证书。它具备以下特性：
 
-工作流在每台服务器上支持两种操作模式：
-- **单域名模式**：在服务器配置中提供 `domain` 时激活，仅检查该特定域名。
-- **全盘扫描模式**：在服务器配置中 `domain` 为空时激活，自动扫描该服务器上所有证书。
+- **并行执行**：利用矩阵策略（Matrix Strategy）为您列表中的每台服务器并行执行检查任务。
+- **配置极简**：仅需配置 3 个基础 Secret，无需指定任何命令。
+- **智能检测**：远程脚本会自动检测服务器环境，以确定使用何种续签和重载命令。
+- **模式统一**：默认对所有服务器执行“全盘扫描”模式，检查所有找到的证书。
 
 ### 快速开始
 
 1.  **确认工作流文件**：确保 `.github/workflows/check-renew-ssl.yml` 是最新版本。
-2.  **设置 GitHub Secrets**：这是最关键的一步，用于安全地存储所有目标服务器的连接信息和私钥。
+2.  **设置 GitHub Secrets**：这是使用本方案唯一需要您配置的步骤。
 
 ### 如何设置 GitHub Secrets
 
-新版工作流使用两个核心 Secrets：`SSH_TARGETS` (JSON格式) 和 `SSH_KEY`。
+最终版的智能工作流仅需 3 个 Secret。请在您的 GitHub 仓库 **Settings** > **Secrets and variables** > **Actions** 页面配置它们：
 
-1.  在你的 GitHub 仓库页面，点击 **Settings** > **Secrets and variables** > **Actions**。
-2.  创建以下两个 Secrets：
+1.  **`SSH_HOSTS`** (必需)
+    *   **内容**: 一个用**逗号**分隔的服务器 IP 或域名列表。
+    *   **示例**: `192.0.2.1,server2.example.com,192.0.2.3`
 
-*   **`SSH_KEY` (必需, 全局共享密钥)**
-    *   **内容**: 一个全局共享的 SSH 私钥，用于登录所有目标服务器。
+2.  **`SSH_USER`** (必需)
+    *   **内容**: 用于登录所有服务器的**同一个**用户名。
+    *   **示例**: `root` 或 `deployer`
+
+3.  **`SSH_KEY`** (必需)
+    *   **内容**: 所有服务器**共享**的 SSH 私钥。
     *   **示例**: `-----BEGIN OPENSSH PRIVATE KEY...`
 
-*   **`SSH_TARGETS` (必需, 服务器定义列表)**
-    *   **内容**: 一个 JSON 数组，其中每个对象代表一台服务器的配置。**所有服务器都将使用上面的 `SSH_KEY` 进行认证。**
-    *   **示例**:
-        ```json
-        [
-          {
-            "name": "WebApp Server 1",
-            "host": "192.0.2.1",
-            "user": "deployer1",
-            "renew_cmd": "sudo certbot renew --quiet",
-            "reload_cmd": "sudo systemctl reload nginx"
-          },
-          {
-            "name": "API Server 2",
-            "host": "192.0.2.2",
-            "user": "deployer2",
-            "domain": "",
-            "renew_cmd": "~/.acme.sh/acme.sh --renew-all",
-            "reload_cmd": "sudo systemctl reload apache2"
-          }
-        ]
-        ```
+### 智能检测逻辑 (Auto-Detection Logic)
 
-*   **JSON 字段说明**:
-    *   `name`, `host`, `user`, `renew_cmd`, `reload_cmd`: (必需) 服务器基础信息和命令。
-    *   `port`: (可选) SSH 端口，默认为 `22`。
-    *   `domain`: (可选) 填入域名激活**单域名模式**；留空 (`""`) 激活**全盘扫描模式**。
-    *   `cert_path`: (可选) 在**单域名模式**下，指定证书文件的绝对路径以供直接读取。
-    *   `cert_scan_path`: (可选) 在**全盘扫描模式**下，指定存放证书的根目录。默认为 `/etc/letsencrypt/live`。
+您无需再手动配置续签和重载命令，远程脚本会按以下顺序自动检测并选择合适的命令：
 
-### 如何选择 `certbot` 与 `acme.sh`
+#### 续签命令检测
+1.  检查 `certbot` 命令是否存在？ -> 是：使用 `sudo certbot renew`
+2.  否则，检查 `~/.acme.sh/acme.sh` 是否存在？ -> 是：使用 `acme.sh --renew-all`
+3.  否则，报错退出。
 
-| 工具 | 优点 | 缺点 | 防火墙注意 |
-| :--- | :--- | :--- | :--- |
-| **Certbot** | - 官方推荐，社区支持好<br>- 与 Nginx/Apache 插件集成度高<br>- 通常由系统包管理器安装，易于管理 | - 可能需要 root 权限<br>- 依赖 Python 环境 | 续签时通常需要开放 **80 端口** 以完成 `http-01` 质询。 |
-| **acme.sh** | - 单个 Shell 脚本，无依赖<br>- 无需 root 权限即可运行<br>- 支持海量 DNS API，便于签发泛域名证书 | - 社区相对较小<br>- 配置方式与 Certbot 不同 | 同样，`http-01` 质询需要开放 **80 端口**。若使用 `dns-01` 质询则无此要求。 |
+#### 重载命令检测
+1.  检查是否存在名为 `nginx` 的 Docker 容器？ -> 是：使用 `docker exec <container> nginx -s reload`
+2.  否则，检查 `nginx.service` 是否在运行？ -> 是：使用 `sudo systemctl reload nginx`
+3.  否则，检查 `apache2.service` 或 `httpd.service` 是否在运行？ -> 是：使用 `sudo systemctl reload apache2` 或 `httpd`
+4.  否则，检查 `gost.service` 是否在运行？ -> 是：使用 `sudo systemctl reload gost`
+5.  否则，报错退出。
 
 ### 常见错误排查
 
 如果 Actions 失败，请检查以下几点：
 
 1.  **SSH 连接失败**：
-    *   `host`, `user` 是否正确？
+    *   `SSH_HOSTS` 中的 IP/域名是否正确？ `SSH_USER` 是否正确？
     *   `SSH_KEY` 是否为正确的、完整的、且有权访问所有目标服务器的私钥？
     *   服务器防火墙是否允许来自 GitHub Actions Runner IP 地址的 SSH 连接？
 
-2.  **无法获取证书日期** (`openssl s_client` 失败)：
-    *   **DNS 解析**：在服务器上 `ping your.domain.com` 或 `nslookup your.domain.com` 确认能解析到正确的 IP。
-    *   **防火墙**：确保服务器的 `443` 端口（或 `port`）对公网开放。
-    *   **Web 服务**：确保 Nginx/Apache 正在运行，并且 SSL 配置正确。
-
-3.  **续签/重载失败** (权限问题):
-    *   `user` 用户是否有权限执行 `renew_cmd` 和 `reload_cmd`？通常这些命令需要 `sudo`。
-    *   **解决方案**：为 `user` 配置免密 `sudo`。创建一个新文件 `sudo visudo -f /etc/sudoers.d/deployer` 并添加以下内容（以 `certbot` 和 `nginx` 为例）：
-        ```
-        deployer ALL=(ALL) NOPASSWD: /usr/bin/certbot, /bin/systemctl reload nginx
-        ```
-        请根据你的实际命令路径和用户名进行调整。
+2.  **命令检测失败或权限不足**:
+    *   确保您的服务器上安装了 `certbot` 或 `acme.sh`。
+    *   确保 `SSH_USER` 用户有权限执行 `sudo` 命令，或有权免密执行 `docker` 命令。
+    *   **解决方案**：为 `SSH_USER` 配置免密 `sudo`。创建一个新文件 `sudo visudo -f /etc/sudoers.d/deployer` 并添加相关命令的免密权限。
 
 ### 本地快速验证命令
 

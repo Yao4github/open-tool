@@ -1,10 +1,12 @@
 # .github/workflows/check-renew-ssl.yml
 #
-# 自动化 SSL 证书检查与续签工作流 (V8 - 最终稳定版)
-# 使用两阶段任务和 jq 命令正确解析动态矩阵，并统一使用单个共享 SSH 密钥。
+# 自动化 SSL 证书检查与续签工作流 (V10 - 智能自适应最终版)
+# - 并行矩阵：根据逗号分隔的 SSH_HOSTS 列表并行执行。
+# - 极简配置：仅需 3 个 Secret，无需配置命令。
+# - 智能检测：自动检测 certbot/acme.sh 和 docker-nginx/nginx/apache/gost。
 # ==============================================================================
 
-name: 'CertGuard: Check & Renew SSL Certificates'
+name: 'CertGuard: Check & Renew SSL Certificates (Auto-Adaptive)'
 
 on:
   schedule:
@@ -23,36 +25,20 @@ on:
         type: string
 
 jobs:
-  # 任务一：准备矩阵
-  setup:
-    runs-on: ubuntu-latest
-    outputs:
-      matrix: ${{ steps.set-matrix.outputs.matrix_json }}
-    steps:
-      - name: Set matrix json from secret
-        id: set-matrix
-        run: echo "matrix_json=$(echo '${{ secrets.SSH_TARGETS }}' | jq -c .)" >> $GITHUB_OUTPUT
-
-  # 任务二：执行检查
   check-and-renew:
-    needs: setup
+    # 使用 fromJSON 和 split/join 技巧从逗号分隔的字符串创建并行矩阵
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(needs.setup.outputs.matrix) }}
+        host: ${{ fromJSON(format('["{0}"]', join(split(secrets.SSH_HOSTS, ','), '"," ')) ) }}
 
-    name: 'Check SSL on ${{ matrix.target.name }}'
+    name: 'Check SSL on ${{ matrix.host }}'
     runs-on: ubuntu-latest
     
     steps:
       - name: 'Step 1: Print Job Information'
         run: |
-          echo "🚀 Starting SSL certificate check for server: ${{ matrix.target.name }} (${{ matrix.target.host }})"
-          if [ -n "${{ matrix.target.domain }}" ]; then
-            echo "🔎 Mode: Single Domain (${{ matrix.target.domain }})"
-          else
-            echo "🔎 Mode: All Domains Scan"
-          fi
+          echo "🚀 Starting SSL certificate check for server: ${{ matrix.host }}"
           echo "⏰ Triggered by: ${{ github.event_name }}"
           if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
             echo "🔧 Dry-Run Mode: ${{ inputs.dry_run }}"
@@ -61,14 +47,14 @@ jobs:
             echo "⏳ Renewal Threshold: 10 days (default)"
           fi
 
-      - name: 'Step 2: Execute Check & Renew Script via ssh-action'
+      - name: 'Step 2: Execute Smart Renewal Script via ssh-action'
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ matrix.target.host }}
-          username: ${{ matrix.target.user }}
-          key: ${{ secrets.SSH_KEY }} # 统一使用全局共享密钥
-          port: ${{ matrix.target.port || 22 }}
+          host: ${{ matrix.host }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
           script: |
+            # 将远程脚本内容写入临时文件并执行
             cat > /tmp/remote_check_and_renew.sh << 'EOF'
             ${{ env.REMOTE_SCRIPT }}
             EOF
@@ -77,28 +63,57 @@ jobs:
             /tmp/remote_check_and_renew.sh
 
         env:
-          DOMAIN: ${{ matrix.target.domain || '' }}
-          CERT_PORT: ${{ matrix.target.port || '443' }}
-          RENEW_CMD: ${{ matrix.target.renew_cmd }}
-          RELOAD_CMD: ${{ matrix.target.reload_cmd }}
-          CERT_PATH: ${{ matrix.target.cert_path || '' }}
-          CERT_SCAN_PATH: ${{ matrix.target.cert_scan_path || '/etc/letsencrypt/live' }}
+          # 仅向远程脚本传递阈值和 dry-run 参数，命令将由脚本自动检测
           RENEW_THRESHOLD_DAYS: ${{ github.event.inputs.renew_threshold_days || '10' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           REMOTE_SCRIPT: |
             #!/bin/bash
             set -euo pipefail
-            DOMAIN="${DOMAIN:-}"
-            CERT_PORT="${CERT_PORT:-443}"
-            RENEW_CMD="${RENEW_CMD}"
-            RELOAD_CMD="${RELOAD_CMD}"
-            CERT_PATH="${CERT_PATH:-}"
-            CERT_SCAN_PATH="${CERT_SCAN_PATH:-/etc/letsencrypt/live}"
+
+            # --- Configuration ---
             RENEW_THRESHOLD_DAYS="${RENEW_THRESHOLD_DAYS:-10}"
             DRY_RUN="${DRY_RUN:-false}"
+            CERT_SCAN_PATH="/etc/letsencrypt/live"
+
+            # --- Helper Functions ---
             log() { echo -e "[\033[0;32mINFO\033[0m] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
             warn() { echo -e "[\033[0;33mWARN\033[0m] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
             error() { echo -e "[\033[0;31mERROR\033[0m] $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2; exit 1; }
+
+            # --- Auto-detection Logic ---
+            RENEW_CMD=""
+            if command -v certbot &> /dev/null; then
+              log "检测到 certbot，将使用 certbot 进行续签。"
+              RENEW_CMD="sudo certbot renew --quiet"
+            elif [ -f "$HOME/.acme.sh/acme.sh" ]; then
+              log "检测到 acme.sh，将使用 acme.sh 进行续签。"
+              RENEW_CMD="\"$HOME/.acme.sh/acme.sh\" --renew-all --quiet"
+            else
+              error "未检测到 certbot 或 acme.sh，无法执行续签。"
+            fi
+
+            RELOAD_CMD=""
+            if command -v docker &> /dev/null && docker ps --filter "name=nginx" --format "{{.ID}}" | grep -q .; then
+              nginx_container=$(docker ps -q --filter "name=nginx" | head -n 1)
+              log "检测到名为 'nginx' 的 Docker 容器 (ID: $nginx_container)，将使用 docker exec 重载。"
+              RELOAD_CMD="docker exec ${nginx_container} nginx -s reload"
+            elif systemctl list-units --type=service --state=running | grep -q 'nginx.service'; then
+              log "检测到运行中的 nginx.service，将使用 systemctl 重载。"
+              RELOAD_CMD="sudo systemctl reload nginx"
+            elif systemctl list-units --type=service --state=running | grep -q 'apache2.service'; then
+              log "检测到运行中的 apache2.service，将使用 systemctl 重载。"
+              RELOAD_CMD="sudo systemctl reload apache2"
+            elif systemctl list-units --type=service --state=running | grep -q 'httpd.service'; then
+              log "检测到运行中的 httpd.service，将使用 systemctl 重载。"
+              RELOAD_CMD="sudo systemctl reload httpd"
+            elif systemctl list-units --type=service --state=running | grep -q 'gost.service'; then
+              log "检测到运行中的 gost.service，将使用 systemctl 重载。"
+              RELOAD_CMD="sudo systemctl reload gost"
+            else
+              error "未检测到任何支持的服务 (Docker Nginx, Nginx, Apache, Gost)，无法执行重载。"
+            fi
+
+            # --- Core Logic ---
             get_remaining_days_from_file() {
               local cert_file="$1"
               local expiry_date_str
@@ -110,10 +125,43 @@ jobs:
               current_epoch=$(date +%s)
               echo $(( (expiry_epoch - current_epoch) / 86400 ))
             }
-            perform_renewal_and_verification() {
-              local initial_days="$1"
-              local verification_mode="$2"
-              local verification_target="$3"
+
+            log "启动全盘扫描模式 (路径: $CERT_SCAN_PATH)"
+            if ! [ -d "$CERT_SCAN_PATH" ]; then error "证书扫描路径 '$CERT_SCAN_PATH' 不存在或不是一个目录。"; fi
+
+            local min_remaining_days=9999
+            local soonest_expiring_cert_file=""
+            local soonest_expiring_domain=""
+            
+            local cert_files
+            cert_files=$(find "$CERT_SCAN_PATH" -type f -name "fullchain.pem")
+            if [[ -z "$cert_files" ]]; then
+              log "在 '$CERT_SCAN_PATH' 下未找到任何 'fullchain.pem' 文件。任务正常结束。"
+              exit 0
+            fi
+
+            while read -r cert_file; do
+                local domain_name
+                domain_name=$(basename "$(dirname "$cert_file")")
+                local current_days
+                current_days=$(get_remaining_days_from_file "$cert_file")
+                if [[ "$current_days" -eq 0 ]]; then
+                    warn "无法读取证书 '$domain_name' ($cert_file) 的有效期，已跳过。"
+                    continue
+                fi
+                log "检测到域名: '$domain_name', 剩余 $current_days 天。"
+                if (( current_days < min_remaining_days )); then
+                    min_remaining_days=$current_days
+                    soonest_expiring_cert_file="$cert_file"
+                    soonest_expiring_domain="$domain_name"
+                fi
+            done <<< "$cert_files"
+
+            if [[ "$min_remaining_days" -eq 9999 ]]; then error "扫描完成，但未能成功解析任何证书的有效期。"; fi
+
+            log "扫描完成。最快过期的域名是 '$soonest_expiring_domain'，剩余 $min_remaining_days 天。"
+            if [[ "$min_remaining_days" -lt "$RENEW_THRESHOLD_DAYS" ]]; then
+              warn "存在证书剩余有效期小于 $RENEW_THRESHOLD_DAYS 天，需要触发全局续签。"
               if [[ "$DRY_RUN" == "true" ]]; then
                 log "Dry-Run 模式：跳过实际续签和重载操作。"
                 exit 0
@@ -126,81 +174,15 @@ jobs:
               log "服务重载命令执行成功。"
               log "等待几秒后进行二次校验..."
               sleep 5
-              local new_remaining_days=0
-              if [[ "$verification_mode" == "network" ]]; then
-                  local expiry_date_str
-                  expiry_date_str=$(echo | timeout 15 openssl s_client -servername "$verification_target" -connect "$verification_target:${CERT_PORT:-443}" 2>/dev/null | openssl x509 -enddate -noout | cut -d= -f2)
-                  local expiry_epoch
-                  expiry_epoch=$(date --date="$expiry_date_str" +%s)
-                  local current_epoch
-                  current_epoch=$(date +%s)
-                  new_remaining_days=$(( (expiry_epoch - current_epoch) / 86400 ))
-              else
-                  new_remaining_days=$(get_remaining_days_from_file "$verification_target")
-              fi
-              log "续签后剩余有效期: $new_remaining_days 天"
-              if [[ "$new_remaining_days" -gt "$initial_days" ]]; then
+              local new_remaining_days
+              new_remaining_days=$(get_remaining_days_from_file "$soonest_expiring_cert_file")
+              log "续签后 '$soonest_expiring_domain' 剩余有效期: $new_remaining_days 天"
+              if [[ "$new_remaining_days" -gt "$min_remaining_days" ]]; then
                 log "\033[0;32m✅ 续签成功！证书有效期已延长。\033[0m"
               else
                 error "二次校验失败！续签后证书有效期未延长。请立即手动检查！"
               fi
-            }
-            if [[ -n "$DOMAIN" ]]; then
-              log "启动单域名检测模式: '$DOMAIN'"
-              local remaining_days
-              if [[ -n "$CERT_PATH" && -f "$CERT_PATH" ]]; then
-                log "使用本地证书模式检测: $CERT_PATH"
-                remaining_days=$(get_remaining_days_from_file "$CERT_PATH")
-              else
-                log "使用网络探测模式检测: $DOMAIN:$CERT_PORT"
-                local expiry_date_str
-                expiry_date_str=$(echo | timeout 15 openssl s_client -servername "$DOMAIN" -connect "$DOMAIN:$CERT_PORT" 2>/dev/null | openssl x509 -enddate -noout | cut -d= -f2)
-                if [[ -z "$expiry_date_str" ]]; then error "无法获取 '$DOMAIN' 的证书到期日期。"; fi
-                local expiry_epoch
-                expiry_epoch=$(date --date="$expiry_date_str" +%s)
-                local current_epoch
-                current_epoch=$(date +%s)
-                remaining_days=$(( (expiry_epoch - current_epoch) / 86400 ))
-              fi
-              log "域名 '$DOMAIN' 剩余有效期: $remaining_days 天"
-              if [[ "$remaining_days" -lt "$RENEW_THRESHOLD_DAYS" ]]; then
-                warn "证书剩余有效期小于 $RENEW_THRESHOLD_DAYS 天，需要续签。"
-                perform_renewal_and_verification "$remaining_days" "network" "$DOMAIN"
-              else
-                log "\033[0;32m✅ 证书有效期正常，无需续签。\033[0m"
-              fi
             else
-              log "启动全盘扫描模式 (路径: $CERT_SCAN_PATH)"
-              if ! [ -d "$CERT_SCAN_PATH" ]; then error "证书扫描路径 '$CERT_SCAN_PATH' 不存在或不是一个目录。"; fi
-              local min_remaining_days=9999
-              local soonest_expiring_cert_file=""
-              local soonest_expiring_domain=""
-              local cert_files
-              cert_files=$(find "$CERT_SCAN_PATH" -type f -name "fullchain.pem")
-              if [[ -z "$cert_files" ]]; then error "在 '$CERT_SCAN_PATH' 下未找到任何 'fullchain.pem' 文件。"; fi
-              while read -r cert_file; do
-                  local domain_name
-                  domain_name=$(basename "$(dirname "$cert_file")")
-                  local current_days
-                  current_days=$(get_remaining_days_from_file "$cert_file")
-                  if [[ "$current_days" -eq 0 ]]; then
-                      warn "无法读取证书 '$domain_name' ($cert_file) 的有效期，已跳过。"
-                      continue
-                  fi
-                  log "检测到域名: '$domain_name', 剩余 $current_days 天。"
-                  if (( current_days < min_remaining_days )); then
-                      min_remaining_days=$current_days
-                      soonest_expiring_cert_file="$cert_file"
-                      soonest_expiring_domain="$domain_name"
-                  fi
-              done <<< "$cert_files"
-              if [[ "$min_remaining_days" -eq 9999 ]]; then error "扫描完成，但未能成功解析任何证书的有效期。"; fi
-              log "扫描完成。最快过期的域名是 '$soonest_expiring_domain'，剩余 $min_remaining_days 天。"
-              if [[ "$min_remaining_days" -lt "$RENEW_THRESHOLD_DAYS" ]]; then
-                warn "存在证书剩余有效期小于 $RENEW_THRESHOLD_DAYS 天，需要触发全局续签。"
-                perform_renewal_and_verification "$min_remaining_days" "file" "$soonest_expiring_cert_file"
-              else
-                log "\033[0;32m✅ 所有证书有效期正常，无需续签。\033[0m"
-              fi
+              log "\033[0;32m✅ 所有证书有效期正常，无需续签。\033[0m"
             fi
             exit 0
