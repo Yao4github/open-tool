@@ -1,19 +1,14 @@
 # .github/workflows/check-renew-ssl.yml
 #
-# 自动化 SSL 证书检查与续签工作流 (V5 - 修正版)
-# 修正了 fromJSON 无法直接访问 secrets 上下文的问题。
-# 通过在 `SSH_TARGETS` Secret 中定义的 JSON 数组，为每台服务器并行创建一个任务。
-# 支持在 JSON 中为服务器内联独立密钥，或回退使用全局共享密钥。
+# 自动化 SSL 证书检查与续签工作流 (V6 - 最终修正版)
+# 采用两阶段任务(two-job)模式，正确地将 secret 解析为动态矩阵。
 # ==============================================================================
 
 name: 'CertGuard: Check & Renew SSL Certificates'
 
 on:
-  # 1. 定时触发：每日凌晨 3:00 (UTC) 执行
   schedule:
     - cron: '0 3 * * *'
-
-  # 2. 手动触发：允许在 GitHub Actions 页面手动运行
   workflow_dispatch:
     inputs:
       dry_run:
@@ -28,15 +23,26 @@ on:
         type: string
 
 jobs:
+  # 任务一：准备矩阵
+  # 此任务的唯一目的是从 secret 读取 JSON，并将其作为输出，供下一阶段的任务使用。
+  setup:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix_json }}
+    steps:
+      - name: Set matrix json from secret
+        id: set-matrix
+        run: echo "matrix_json=${{ secrets.SSH_TARGETS }}" >> $GITHUB_OUTPUT
+
+  # 任务二：执行检查
   check-and-renew:
-    # 1. 先在 job 级别将 secret 赋值给一个环境变量
-    env:
-      SSH_TARGETS_JSON: ${{ secrets.SSH_TARGETS }}
+    # 必须等待 setup 任务成功完成
+    needs: setup
     strategy:
       fail-fast: false
+      # 从 setup 任务的输出中安全地读取和解析 JSON
       matrix:
-        # 2. 然后从 env 上下文中读取并解析 JSON
-        target: ${{ fromJSON(env.SSH_TARGETS_JSON) }}
+        target: ${{ fromJSON(needs.setup.outputs.matrix) }}
 
     name: 'Check SSL on ${{ matrix.target.name }}'
     runs-on: ubuntu-latest
@@ -63,7 +69,6 @@ jobs:
         with:
           host: ${{ matrix.target.host }}
           username: ${{ matrix.target.user }}
-          # 优先使用 matrix 中的独立密钥，否则回退到全局共享密钥
           key: ${{ matrix.target.ssh_key || secrets.SSH_KEY }}
           port: ${{ matrix.target.port || 22 }}
           script: |
@@ -75,18 +80,14 @@ jobs:
             /tmp/remote_check_and_renew.sh
 
         env:
-          # 使用矩阵中的值作为环境变量传递给远程脚本
           DOMAIN: ${{ matrix.target.domain || '' }}
           CERT_PORT: ${{ matrix.target.port || '443' }}
           RENEW_CMD: ${{ matrix.target.renew_cmd }}
           RELOAD_CMD: ${{ matrix.target.reload_cmd }}
           CERT_PATH: ${{ matrix.target.cert_path || '' }}
           CERT_SCAN_PATH: ${{ matrix.target.cert_scan_path || '/etc/letsencrypt/live' }}
-          
           RENEW_THRESHOLD_DAYS: ${{ github.event.inputs.renew_threshold_days || '10' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
-          
-          # 远程脚本本身无需更改
           REMOTE_SCRIPT: |
             #!/bin/bash
             set -euo pipefail
