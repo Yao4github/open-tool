@@ -1,6 +1,7 @@
 # .github/workflows/check-renew-ssl.yml
 #
-# 自动化 SSL 证书检查与续签工作流 (V4 - 支持混合密钥)
+# 自动化 SSL 证书检查与续签工作流 (V5 - 修正版)
+# 修正了 fromJSON 无法直接访问 secrets 上下文的问题。
 # 通过在 `SSH_TARGETS` Secret 中定义的 JSON 数组，为每台服务器并行创建一个任务。
 # 支持在 JSON 中为服务器内联独立密钥，或回退使用全局共享密钥。
 # ==============================================================================
@@ -28,10 +29,14 @@ on:
 
 jobs:
   check-and-renew:
+    # 1. 先在 job 级别将 secret 赋值给一个环境变量
+    env:
+      SSH_TARGETS_JSON: ${{ secrets.SSH_TARGETS }}
     strategy:
       fail-fast: false
       matrix:
-        target: ${{ fromJSON(secrets.SSH_TARGETS) }}
+        # 2. 然后从 env 上下文中读取并解析 JSON
+        target: ${{ fromJSON(env.SSH_TARGETS_JSON) }}
 
     name: 'Check SSL on ${{ matrix.target.name }}'
     runs-on: ubuntu-latest
