@@ -30,19 +30,19 @@
 
 ### 智能检测逻辑 (Auto-Detection Logic)
 
-您无需再手动配置续签和重载命令，远程脚本会按以下顺序自动检测并选择合适的命令：
+您无需再手动配置续签和重载命令，远程脚本会自动检测并执行。
 
 #### 续签命令检测
-1.  检查 `certbot` 命令是否存在？ -> 是：使用 `sudo certbot renew`
-2.  否则，检查 `~/.acme.sh/acme.sh` 是否存在？ -> 是：使用 `acme.sh --renew-all`
-3.  否则，报错退出。
+脚本会按以下顺序检测续签工具，并使用找到的第一个：
+1.  `certbot`
+2.  `acme.sh` (位于 `~/.acme.sh/`)
 
 #### 重载命令检测
-1.  检查是否存在名为 `nginx` 的 Docker 容器？ -> 是：使用 `docker exec <container> nginx -s reload`
-2.  否则，检查 `nginx.service` 是否在运行？ -> 是：使用 `sudo systemctl reload nginx`
-3.  否则，检查 `apache2.service` 或 `httpd.service` 是否在运行？ -> 是：使用 `sudo systemctl reload apache2` 或 `httpd`
-4.  否则，检查 `gost.service` 是否在运行？ -> 是：使用 `sudo systemctl reload gost`
-5.  否则，报错退出。
+脚本会检查所有以下支持的服务，并将所有找到的、正在运行的服务都加入到重载队列中，在续签成功后**全部重载**：
+-   **Docker Nginx**: 检查名为 `nginx` 的 Docker 容器。
+-   **Systemd Nginx**: 检查 `nginx.service`。
+-   **Systemd Apache**: 检查 `apache2.service` 或 `httpd.service`。
+-   **Systemd Gost**: 检查 `gost.service`。
 
 ### 常见错误排查
 

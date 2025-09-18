@@ -1,9 +1,8 @@
 # .github/workflows/check-renew-ssl.yml
 #
-# 自动化 SSL 证书检查与续签工作流 (V10 - 智能自适应最终版)
-# - 并行矩阵：根据逗号分隔的 SSH_HOSTS 列表并行执行。
-# - 极简配置：仅需 3 个 Secret，无需配置命令。
-# - 智能检测：自动检测 certbot/acme.sh 和 docker-nginx/nginx/apache/gost。
+# 自动化 SSL 证书检查与续签工作流 (V11 - 最终版)
+# - 并行矩阵，配置极简，智能检测。
+# - 重载逻辑更新：检测所有支持的服务 (docker-nginx/nginx/apache/gost) 并全部重载。
 # ==============================================================================
 
 name: 'CertGuard: Check & Renew SSL Certificates (Auto-Adaptive)'
@@ -26,11 +25,10 @@ on:
 
 jobs:
   check-and-renew:
-    # 使用 fromJSON 和 split/join 技巧从逗号分隔的字符串创建并行矩阵
     strategy:
       fail-fast: false
       matrix:
-        host: ${{ fromJSON(format('["{0}"]', join(split(secrets.SSH_HOSTS, ','), '"," ')) ) }}
+        host: ${{ fromJSON(format('["{0}"]', join(split(secrets.SSH_HOSTS, ','), '"," ')) }} 
 
     name: 'Check SSL on ${{ matrix.host }}'
     runs-on: ubuntu-latest
@@ -54,7 +52,6 @@ jobs:
           username: ${{ secrets.SSH_USER }}
           key: ${{ secrets.SSH_KEY }}
           script: |
-            # 将远程脚本内容写入临时文件并执行
             cat > /tmp/remote_check_and_renew.sh << 'EOF'
             ${{ env.REMOTE_SCRIPT }}
             EOF
@@ -63,7 +60,6 @@ jobs:
             /tmp/remote_check_and_renew.sh
 
         env:
-          # 仅向远程脚本传递阈值和 dry-run 参数，命令将由脚本自动检测
           RENEW_THRESHOLD_DAYS: ${{ github.event.inputs.renew_threshold_days || '10' }}
           DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
           REMOTE_SCRIPT: |
@@ -92,24 +88,29 @@ jobs:
               error "未检测到 certbot 或 acme.sh，无法执行续签。"
             fi
 
-            RELOAD_CMD=""
+            RELOAD_CMDS=""
             if command -v docker &> /dev/null && docker ps --filter "name=nginx" --format "{{.ID}}" | grep -q .; then
               nginx_container=$(docker ps -q --filter "name=nginx" | head -n 1)
-              log "检测到名为 'nginx' 的 Docker 容器 (ID: $nginx_container)，将使用 docker exec 重载。"
-              RELOAD_CMD="docker exec ${nginx_container} nginx -s reload"
-            elif systemctl list-units --type=service --state=running | grep -q 'nginx.service'; then
-              log "检测到运行中的 nginx.service，将使用 systemctl 重载。"
-              RELOAD_CMD="sudo systemctl reload nginx"
-            elif systemctl list-units --type=service --state=running | grep -q 'apache2.service'; then
-              log "检测到运行中的 apache2.service，将使用 systemctl 重载。"
-              RELOAD_CMD="sudo systemctl reload apache2"
+              log "检测到名为 'nginx' 的 Docker 容器 (ID: $nginx_container)，添加重载命令。"
+              RELOAD_CMDS+="docker exec ${nginx_container} nginx -s reload;"
+            fi
+            if systemctl list-units --type=service --state=running | grep -q 'nginx.service'; then
+              log "检测到运行中的 nginx.service，添加重载命令。"
+              RELOAD_CMDS+="sudo systemctl reload nginx;"
+            fi
+            if systemctl list-units --type=service --state=running | grep -q 'apache2.service'; then
+              log "检测到运行中的 apache2.service，添加重载命令。"
+              RELOAD_CMDS+="sudo systemctl reload apache2;"
             elif systemctl list-units --type=service --state=running | grep -q 'httpd.service'; then
-              log "检测到运行中的 httpd.service，将使用 systemctl 重载。"
-              RELOAD_CMD="sudo systemctl reload httpd"
-            elif systemctl list-units --type=service --state=running | grep -q 'gost.service'; then
-              log "检测到运行中的 gost.service，将使用 systemctl 重载。"
-              RELOAD_CMD="sudo systemctl reload gost"
-            else
+              log "检测到运行中的 httpd.service，添加重载命令。"
+              RELOAD_CMDS+="sudo systemctl reload httpd;"
+            fi
+            if systemctl list-units --type=service --state=running | grep -q 'gost.service'; then
+              log "检测到运行中的 gost.service，添加重载命令。"
+              RELOAD_CMDS+="sudo systemctl reload gost;"
+            fi
+
+            if [ -z "${RELOAD_CMDS}" ]; then
               error "未检测到任何支持的服务 (Docker Nginx, Nginx, Apache, Gost)，无法执行重载。"
             fi
 
@@ -169,9 +170,9 @@ jobs:
               log "正在执行续签命令: $RENEW_CMD"
               if ! eval "$RENEW_CMD"; then error "证书续签失败！请检查续签命令和相关日志。"; fi
               log "证书续签命令执行成功。"
-              log "正在执行重载命令: $RELOAD_CMD"
-              if ! eval "$RELOAD_CMD"; then error "服务重载失败！请检查重载命令和相关日志。"; fi
-              log "服务重载命令执行成功。"
+              log "正在执行重载命令..."
+              if ! eval "$RELOAD_CMDS"; then error "服务重载失败！请检查相关日志。"; fi
+              log "所有检测到的服务均已重载。"
               log "等待几秒后进行二次校验..."
               sleep 5
               local new_remaining_days
