@@ -1,0 +1,228 @@
+# .github/workflows/check-renew-ssl.yml
+#
+# 自动化 SSL 证书检查与续签工作流 (V2 - 支持全盘扫描)
+# 模式1: 若提供 DOMAIN, 则检查该特定域名。
+# 模式2: 若不提供 DOMAIN, 则扫描指定路径下所有证书, 找出最快过期的来判断。
+# ==============================================================================
+
+name: 'CertGuard: Check & Renew SSL Certificate'
+
+on:
+  # 1. 定时触发：每日凌晨 3:00 (UTC) 执行
+  schedule:
+    - cron: '0 3 * * *'
+
+  # 2. 手动触发：允许在 GitHub Actions 页面手动运行
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry-Run: 只检查不续签 (true/false)'
+        required: true
+        default: 'false'
+        type: boolean
+      renew_threshold_days:
+        description: '续签阈值 (天)'
+        required: true
+        default: '10'
+        type: string
+
+jobs:
+  check-and-renew:
+    name: 'Check SSL Certificate(s)'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 'Step 1: Print Job Information'
+        run: |
+          if [ -n "${{ secrets.DOMAIN }}" ]; then
+            echo "🚀 Starting SSL certificate check for a single domain: ${{ secrets.DOMAIN }}"
+          else
+            echo "🚀 Starting scan for all SSL certificates..."
+          fi
+          echo "⏰ Triggered by: ${{ github.event_name }}"
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "🔧 Dry-Run Mode: ${{ inputs.dry_run }}"
+            echo "⏳ Renewal Threshold: ${{ inputs.renew_threshold_days }} days"
+          else
+            echo "⏳ Renewal Threshold: 10 days (default)"
+          fi
+
+      - name: 'Step 2: Execute Check & Renew Script via ssh-action'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: 22 # 可根据需要修改
+          script: |
+            # 将远程脚本内容写入临时文件
+            cat > /tmp/remote_check_and_renew.sh << 'EOF'
+            ${{ env.REMOTE_SCRIPT }}
+            EOF
+            
+            # 赋予执行权限并执行
+            chmod +x /tmp/remote_check_and_renew.sh
+            /tmp/remote_check_and_renew.sh
+
+        env:
+          # 将 GitHub Secrets 和 Inputs 作为环境变量传递给远程脚本
+          DOMAIN: ${{ secrets.DOMAIN || '' }}
+          CERT_PORT: ${{ secrets.CERT_PORT || '443' }}
+          RENEW_CMD: ${{ secrets.RENEW_CMD }}
+          RELOAD_CMD: ${{ secrets.RELOAD_CMD }}
+          CERT_PATH: ${{ secrets.CERT_PATH || '' }}
+          CERT_SCAN_PATH: ${{ secrets.CERT_SCAN_PATH || '/etc/letsencrypt/live' }} # 新增: 全盘扫描路径
+          # 根据触发方式确定参数
+          RENEW_THRESHOLD_DAYS: ${{ github.event.inputs.renew_threshold_days || '10' }}
+          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          # 将下面的远程脚本内容注入到环境变量
+          REMOTE_SCRIPT: |
+            #!/bin/bash
+            #
+            # 远程 SSL 证书检查与续签脚本 (V2 - 支持全盘扫描)
+            #
+            
+            set -euo pipefail
+            
+            # --- Configuration (from environment variables) ---
+            DOMAIN="${DOMAIN:-}"
+            CERT_PORT="${CERT_PORT:-443}"
+            RENEW_CMD="${RENEW_CMD}"
+            RELOAD_CMD="${RELOAD_CMD}"
+            CERT_PATH="${CERT_PATH:-}"
+            CERT_SCAN_PATH="${CERT_SCAN_PATH:-/etc/letsencrypt/live}"
+            RENEW_THRESHOLD_DAYS="${RENEW_THRESHOLD_DAYS:-10}"
+            DRY_RUN="${DRY_RUN:-false}"
+            
+            # --- Helper Functions ---
+            log() { echo -e "[[0;32mINFO[0m] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
+            warn() { echo -e "[[0;33mWARN[0m] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
+            error() { echo -e "[[0;31mERROR[0m] $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2; exit 1; }
+            
+            get_remaining_days_from_file() {
+              local cert_file="$1"
+              local expiry_date_str
+              expiry_date_str=$(openssl x509 -enddate -noout -in "$cert_file" | cut -d= -f2)
+              if [[ -z "$expiry_date_str" ]]; then echo "0"; return; fi
+              local expiry_epoch
+              expiry_epoch=$(date --date="$expiry_date_str" +%s)
+              local current_epoch
+              current_epoch=$(date +%s)
+              echo $(( (expiry_epoch - current_epoch) / 86400 ))
+            }
+
+            # --- Renewal and Verification Logic ---
+            perform_renewal_and_verification() {
+              local initial_days="$1"
+              local verification_mode="$2" # 'network' or 'file'
+              local verification_target="$3" # domain name or file path
+              
+              if [[ "$DRY_RUN" == "true" ]]; then
+                log "Dry-Run 模式：跳过实际续签和重载操作。"
+                exit 0
+              fi
+            
+              log "正在执行续签命令: $RENEW_CMD"
+              if ! eval "$RENEW_CMD"; then error "证书续签失败！请检查续签命令和相关日志。"; fi
+              log "证书续签命令执行成功。"
+            
+              log "正在执行重载命令: $RELOAD_CMD"
+              if ! eval "$RELOAD_CMD"; then error "服务重载失败！请检查重载命令和相关日志。"; fi
+              log "服务重载命令执行成功。"
+            
+              log "等待几秒后进行二次校验..."
+              sleep 5
+              
+              local new_remaining_days=0
+              if [[ "$verification_mode" == "network" ]]; then
+                  local expiry_date_str
+                  expiry_date_str=$(echo | timeout 15 openssl s_client -servername "$verification_target" -connect "$verification_target:${CERT_PORT:-443}" 2>/dev/null | openssl x509 -enddate -noout | cut -d= -f2)
+                  local expiry_epoch
+                  expiry_epoch=$(date --date="$expiry_date_str" +%s)
+                  local current_epoch
+                  current_epoch=$(date +%s)
+                  new_remaining_days=$(( (expiry_epoch - current_epoch) / 86400 ))
+              else # file mode
+                  new_remaining_days=$(get_remaining_days_from_file "$verification_target")
+              fi
+
+              log "续签后剩余有效期: $new_remaining_days 天"
+            
+              if [[ "$new_remaining_days" -gt "$initial_days" ]]; then
+                log "[0;32m✅ 续签成功！证书有效期已延长。[0m"
+              else
+                error "二次校验失败！续签后证书有效期未延长。请立即手动检查！"
+              fi
+            }
+
+            # --- Main Logic ---
+            if [[ -n "$DOMAIN" ]]; then
+              # --- SINGLE DOMAIN MODE ---
+              log "启动单域名检测模式: '$DOMAIN'"
+              local remaining_days
+              
+              if [[ -n "$CERT_PATH" && -f "$CERT_PATH" ]]; then
+                log "使用本地证书模式检测: $CERT_PATH"
+                remaining_days=$(get_remaining_days_from_file "$CERT_PATH")
+              else
+                log "使用网络探测模式检测: $DOMAIN:$CERT_PORT"
+                local expiry_date_str
+                expiry_date_str=$(echo | timeout 15 openssl s_client -servername "$DOMAIN" -connect "$DOMAIN:$CERT_PORT" 2>/dev/null | openssl x509 -enddate -noout | cut -d= -f2)
+                if [[ -z "$expiry_date_str" ]]; then error "无法获取 '$DOMAIN' 的证书到期日期。"; fi
+                local expiry_epoch
+                expiry_epoch=$(date --date="$expiry_date_str" +%s)
+                local current_epoch
+                current_epoch=$(date +%s)
+                remaining_days=$(( (expiry_epoch - current_epoch) / 86400 ))
+              fi
+
+              log "域名 '$DOMAIN' 剩余有效期: $remaining_days 天"
+              if [[ "$remaining_days" -lt "$RENEW_THRESHOLD_DAYS" ]]; then
+                warn "证书剩余有效期小于 $RENEW_THRESHOLD_DAYS 天，需要续签。"
+                perform_renewal_and_verification "$remaining_days" "network" "$DOMAIN"
+              else
+                log "[0;32m✅ 证书有效期正常，无需续签。[0m"
+              fi
+            else
+              # --- ALL DOMAINS SCAN MODE ---
+              log "启动全盘扫描模式 (路径: $CERT_SCAN_PATH)"
+              if ! [ -d "$CERT_SCAN_PATH" ]; then error "证书扫描路径 '$CERT_SCAN_PATH' 不存在或不是一个目录。"; fi
+
+              local min_remaining_days=9999
+              local soonest_expiring_cert_file=""
+              local soonest_expiring_domain=""
+              
+              local cert_files
+              cert_files=$(find "$CERT_SCAN_PATH" -type f -name "fullchain.pem")
+              if [[ -z "$cert_files" ]]; then error "在 '$CERT_SCAN_PATH' 下未找到任何 'fullchain.pem' 文件。"; fi
+
+              while read -r cert_file; do
+                  local domain_name
+                  domain_name=$(basename "$(dirname "$cert_file")")
+                  local current_days
+                  current_days=$(get_remaining_days_from_file "$cert_file")
+                  
+                  if [[ "$current_days" -eq 0 ]]; then
+                      warn "无法读取证书 '$domain_name' ($cert_file) 的有效期，已跳过。"
+                      continue
+                  fi
+                  log "检测到域名: '$domain_name', 剩余 $current_days 天。"
+                  if (( current_days < min_remaining_days )); then
+                      min_remaining_days=$current_days
+                      soonest_expiring_cert_file="$cert_file"
+                      soonest_expiring_domain="$domain_name"
+                  fi
+              done <<< "$cert_files"
+
+              if [[ "$min_remaining_days" -eq 9999 ]]; then error "扫描完成，但未能成功解析任何证书的有效期。"; fi
+
+              log "扫描完成。最快过期的域名是 '$soonest_expiring_domain'，剩余 $min_remaining_days 天。"
+              if [[ "$min_remaining_days" -lt "$RENEW_THRESHOLD_DAYS" ]]; then
+                warn "存在证书剩余有效期小于 $RENEW_THRESHOLD_DAYS 天，需要触发全局续签。"
+                perform_renewal_and_verification "$min_remaining_days" "file" "$soonest_expiring_cert_file"
+              else
+                log "[0;32m✅ 所有证书有效期正常，无需续签。[0m"
+              fi
+            fi
+            
+            exit 0
