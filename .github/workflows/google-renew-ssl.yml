@@ -1,0 +1,32 @@
+# .github/workflows/google-renew-ssl.yml
+# --- 父工作流 (Google 服务器专用) ---
+
+name: 'CertGuard: 续签 Google 服务器 SSL'
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # 每天凌晨3点运行
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '演练模式 (Dry-Run): 只检查不续签 (true/false)'
+        required: true
+        default: 'false'
+        type: boolean
+
+jobs:
+  dispatch:
+    name: '调度到可复用工作流'
+    # 调用子工作流
+    uses: ./.github/workflows/reusable-check-ssl.yml
+    with:
+      # 传递固定的参数
+      server_name: 'Google Server'
+      # 传递手动触发时输入的参数
+      dry_run: ${{ github.event.inputs.dry_run || false }}
+    secrets:
+      # 从仓库 Secrets 中读取这台服务器专属的连接信息并传递给子工作流
+      host: ${{ secrets.GOOGLE_HOST }}
+      username: ${{ secrets.GOOGLE_USER }}
+      port: ${{ secrets.GOOGLE_PORT }}
+      SSH_KEY: ${{ secrets.GOOGLE_KEY }}

@@ -1,68 +1,55 @@
-# .github/workflows/check-renew-ssl.yml
-#
-# 自动化 SSL 证书检查与续签工作流 (V11 - 最终版)
-# - 并行矩阵，配置极简，智能检测。
-# - 重载逻辑更新：检测所有支持的服务 (docker-nginx/nginx/apache/gost) 并全部重载。
-# ==============================================================================
+# .github/workflows/reusable-check-ssl.yml
+# --- 子工作流 (可复用) ---
+# 包含所有实际操作逻辑
 
-name: 'CertGuard: Check & Renew SSL Certificates (Auto-Adaptive)'
+name: 'Reusable: 检查并续签 SSL 证书'
 
 on:
-  schedule:
-    - cron: '0 3 * * *'
-  workflow_dispatch:
+  workflow_call:
     inputs:
-      dry_run:
-        description: 'Dry-Run: 只检查不续签 (true/false)'
+      server_name:
+        description: '服务器的名称'
         required: true
-        default: 'false'
-        type: boolean
-      renew_threshold_days:
-        description: '续签阈值 (天)'
-        required: true
-        default: '10'
         type: string
+      host:
+        description: '服务器主机名或 IP'
+        required: true
+        type: string
+      username:
+        description: 'SSH 用户名'
+        required: true
+        type: string
+      dry_run:
+        description: '演练模式'
+        required: false
+        type: boolean
+        default: false
+      port:
+        description: 'SSH 端口'
+        required: false
+        type: number
+        default: 22
+    secrets:
+      SSH_KEY:
+        description: '用于连接服务器的 SSH 私钥'
+        required: true
 
 jobs:
-  prepare-matrix:
-    name: 'Prepare Matrix from Secrets'
-    runs-on: ubuntu-latest
-    outputs:
-      hosts: ${{ steps.set-matrix.outputs.hosts }}
-    steps:
-      - name: 'Generate Matrix from SSH_HOSTS Secret'
-        id: set-matrix
-        env:
-          SSH_HOSTS: ${{ secrets.SSH_HOSTS }}
-        run: echo "hosts=$(echo "$SSH_HOSTS" | jq -cR 'split(",")')" >> "$GITHUB_OUTPUT"
-
   check-and-renew:
-    needs: prepare-matrix
-    strategy:
-      fail-fast: false
-      matrix:
-        host: ${{ fromJSON(needs.prepare-matrix.outputs.hosts) }}
-
-    name: 'Check SSL on ${{ matrix.host }}'
+    name: '在 ${{ inputs.server_name }} (${{ inputs.host }}) 上检查 SSL'
     runs-on: ubuntu-latest
-    
     steps:
-      - name: 'Step 1: Print Job Information'
+      - name: '步骤 1: 打印任务信息'
         run: |
-          echo "🚀 Starting SSL certificate check for server: ${{ matrix.host }}"
-          echo "⏰ Triggered by: ${{ github.event_name }}"
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            echo "🔧 Dry-Run Mode: ${{ inputs.dry_run }}"
-            echo "⏳ Renewal Threshold: ${{ inputs.renew_threshold_days }} days"
-          else
-            echo "⏳ Renewal Threshold: 10 days (default)"
-          fi
+          echo "🚀 开始为服务器 ${{ inputs.server_name }} (${{ inputs.host }}) 检查 SSL 证书"
+          echo "🔧 演练模式: ${{ inputs.dry_run }}"
 
-      - name: 'Step 2: Execute Smart Renewal Script via ssh-action'
+      - name: '步骤 2: 通过 SSH 执行智能续签脚本'
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ matrix.host }}
-          username: ${{ secrets.SSH_USER }}
+          host: ${{ inputs.host }}
+          username: ${{ inputs.username }}
+          port: ${{ inputs.port }}
           key: ${{ secrets.SSH_KEY }}
           script: |
             cat > /tmp/remote_check_and_renew.sh << 'EOF'
@@ -71,10 +58,9 @@ jobs:
             
             chmod +x /tmp/remote_check_and_renew.sh
             /tmp/remote_check_and_renew.sh
-
         env:
-          RENEW_THRESHOLD_DAYS: ${{ github.event.inputs.renew_threshold_days || '10' }}
-          DRY_RUN: ${{ github.event.inputs.dry_run || 'false' }}
+          RENEW_THRESHOLD_DAYS: '10' # 续签阈值固定为10天
+          DRY_RUN: ${{ inputs.dry_run }}
           REMOTE_SCRIPT: |
             #!/bin/bash
             set -euo pipefail
@@ -184,7 +170,7 @@ jobs:
               if ! eval "$RENEW_CMD"; then error "证书续签失败！请检查续签命令和相关日志。"; fi
               log "证书续签命令执行成功。"
               log "正在执行重载命令..."
-              if ! eval "$RELOAD_CMDS"; then error "服务重载失败！请检查相关日志。"; fi
+              if ! eval "$RELOAD_DS"; then error "服务重载失败！请检查相关日志。"; fi
               log "所有检测到的服务均已重载。"
               log "等待几秒后进行二次校验..."
               sleep 5
