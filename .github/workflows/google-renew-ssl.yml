@@ -22,11 +22,11 @@ jobs:
     with:
       # 传递固定的参数
       server_name: 'Google Server'
+      host: ${{ secrets.GOOGLE_HOST }}
+      username: ${{ secrets.GOOGLE_USER }}
+      port: ${{ secrets.GOOGLE_PORT }}
       # 传递手动触发时输入的参数
       dry_run: ${{ github.event.inputs.dry_run || false }}
     secrets:
       # 从仓库 Secrets 中读取这台服务器专属的连接信息并传递给子工作流
-      host: ${{ secrets.GOOGLE_HOST }}
-      username: ${{ secrets.GOOGLE_USER }}
-      port: ${{ secrets.GOOGLE_PORT }}
       SSH_KEY: ${{ secrets.GOOGLE_KEY }}
