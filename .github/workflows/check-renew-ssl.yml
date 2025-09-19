@@ -24,11 +24,24 @@ on:
         type: string
 
 jobs:
+  prepare-matrix:
+    name: 'Prepare Matrix from Secrets'
+    runs-on: ubuntu-latest
+    outputs:
+      hosts: ${{ steps.set-matrix.outputs.hosts }}
+    steps:
+      - name: 'Generate Matrix from SSH_HOSTS Secret'
+        id: set-matrix
+        env:
+          SSH_HOSTS: ${{ secrets.SSH_HOSTS }}
+        run: echo "hosts=$(echo "$SSH_HOSTS" | jq -cR 'split(",")')" >> "$GITHUB_OUTPUT"
+
   check-and-renew:
+    needs: prepare-matrix
     strategy:
       fail-fast: false
       matrix:
-        host: ${{ fromJSON(format('["{0}"]', join(split(secrets.SSH_HOSTS, ','), '"," ')) }} 
+        host: ${{ fromJSON(needs.prepare-matrix.outputs.hosts) }}
 
     name: 'Check SSL on ${{ matrix.host }}'
     runs-on: ubuntu-latest
