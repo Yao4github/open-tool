@@ -11,7 +11,7 @@ on:
       dry_run:
         description: '演练模式 (Dry-Run): 只检查不续签 (true/false)'
         required: true
-        default: 'false'
+        default: false
         type: boolean
 
 jobs:
@@ -22,11 +22,10 @@ jobs:
     with:
       # 传递固定的参数
       server_name: 'Google Server'
-      host: ${{ secrets.GOOGLE_HOST }}
-      username: ${{ secrets.GOOGLE_USER }}
-      port: ${{ secrets.GOOGLE_PORT }}
       # 传递手动触发时输入的参数
       dry_run: ${{ github.event.inputs.dry_run || false }}
     secrets:
-      # 从仓库 Secrets 中读取这台服务器专属的连接信息并传递给子工作流
-      SSH_KEY: ${{ secrets.GOOGLE_KEY }}
+      SERVER_HOST: ${{ secrets.GOOGLE_HOST }}
+      SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}
+      SERVER_SSH_KEY: ${{ secrets.GOOGLE_KEY }}
+      SERVER_PORT: ${{ secrets.GOOGLE_PORT }}

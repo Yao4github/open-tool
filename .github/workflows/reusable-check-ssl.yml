@@ -11,46 +11,38 @@ on:
         description: '服务器的名称'
         required: true
         type: string
-      host:
-        description: '服务器主机名或 IP'
-        required: true
-        type: string
-      username:
-        description: 'SSH 用户名'
-        required: true
-        type: string
       dry_run:
         description: '演练模式'
         required: false
         type: boolean
         default: false
-      port:
-        description: 'SSH 端口'
-        required: false
-        type: number
-        default: 22
     secrets:
-      SSH_KEY:
-        description: '用于连接服务器的 SSH 私钥'
+      SERVER_HOST:
+        required: true
+      SERVER_USERNAME:
+        required: true
+      SERVER_SSH_KEY:
+        required: true
+      SERVER_PORT:
         required: true
 
 jobs:
   check-and-renew:
-    name: '在 ${{ inputs.server_name }} (${{ inputs.host }}) 上检查 SSL'
+    name: '在 ${{ inputs.server_name }} 上检查 SSL'
     runs-on: ubuntu-latest
     steps:
       - name: '步骤 1: 打印任务信息'
         run: |
-          echo "🚀 开始为服务器 ${{ inputs.server_name }} (${{ inputs.host }}) 检查 SSL 证书"
+          echo "🚀 开始为服务器 ${{ inputs.server_name }} 检查 SSL 证书"
           echo "🔧 演练模式: ${{ inputs.dry_run }}"
 
       - name: '步骤 2: 通过 SSH 执行智能续签脚本'
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: ${{ inputs.host }}
-          username: ${{ inputs.username }}
-          port: ${{ inputs.port }}
-          key: ${{ secrets.SSH_KEY }}
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
           script: |
             cat > /tmp/remote_check_and_renew.sh << 'EOF'
             ${{ env.REMOTE_SCRIPT }}
