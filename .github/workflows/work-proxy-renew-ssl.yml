@@ -1,0 +1,23 @@
+# .github/workflows/work-proxy-renew-ssl.yml
+# --- 父工作流 (Work Proxy 服务器专用) ---
+
+name: 'CertGuard: 续签 Work Proxy 服务器 SSL'
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # 每天凌晨3点运行
+  workflow_dispatch:
+
+jobs:
+  dispatch:
+    name: '调度到可复用工作流'
+    # 调用子工作流
+    uses: ./.github/workflows/reusable-check-ssl.yml
+    with:
+      # 传递固定的参数
+      server_name: 'Work Proxy Server'
+    secrets:
+      SERVER_HOST: ${{ secrets.WORK_PROXY_HOST }}
+      SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}
+      SERVER_SSH_KEY: ${{ secrets.GOOGLE_KEY }}
+      SERVER_PORT: ${{ secrets.GOOGLE_PORT }}
