@@ -23,7 +23,7 @@ jobs:
       # 传递固定的参数
       server_name: 'Google Server'
       # 传递手动触发时输入的参数
-      dry_run: ${{ github.event.inputs.dry_run || false }}
+      dry_run: ${{ github.event.inputs.dry_run }}
     secrets:
       SERVER_HOST: ${{ secrets.GOOGLE_HOST }}
       SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}
