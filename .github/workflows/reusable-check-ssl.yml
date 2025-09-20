@@ -58,8 +58,11 @@ jobs:
             log() { echo -e "[\033[0;32mINFO\033[0m] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
             warn() { echo -e "[\033[0;33mWARN\033[0m] $(date '+%Y-%m-%d %H:%M:%S') - $1"; }
             error() { echo -e "[\033[0;31mERROR\033[0m] $(date '+%Y-%m-%d %H:%M:%S') - $1" >&2; exit 1; }
+            step_start() { log "=== 开始执行: $1 ==="; }
+            step_end() { log "=== 完成执行: $1 ===\n"; }
 
             # --- Auto-detection Logic ---
+            step_start "检测证书管理工具"
             RENEW_CMD=""
             if command -v certbot &> /dev/null; then
               log "检测到 certbot，将使用 certbot 进行续签。"
@@ -70,34 +73,96 @@ jobs:
             else
               error "未检测到 certbot 或 acme.sh，无法执行续签。"
             fi
+            step_end "检测证书管理工具"
 
+            step_start "检测需要重载的服务"
+            # 初始化重载命令数组
             RELOAD_CMDS=""
-            if command -v docker &> /dev/null && docker ps --filter "name=nginx" --format "{{.ID}}" | grep -q .; then
-              nginx_container=$(docker ps -q --filter "name=nginx" | head -n 1)
-              log "检测到名为 'nginx' 的 Docker 容器 (ID: $nginx_container)，添加重载命令。"
-              RELOAD_CMDS+="docker exec ${nginx_container} nginx -s reload;"
+
+            # 检测 Docker 容器（支持不同的命名方式）
+            if command -v docker &> /dev/null; then
+              step_start "Docker 环境检测"
+              log "检测到 Docker 环境，开始搜索 Nginx 容器..."
+              # 使用数组存储结果，避免管道子shell问题
+              mapfile -t containers < <(docker ps --format "{{.ID}} {{.Names}}" | grep -iE 'nginx|proxy' || true)
+              for container in "${containers[@]}"; do
+                container_id=$(echo "$container" | cut -d' ' -f1)
+                container_name=$(echo "$container" | cut -d' ' -f2-)
+                if docker exec "$container_id" which nginx &> /dev/null; then
+                  log "检测到 Nginx Docker 容器: $container_name (ID: $container_id)"
+                  RELOAD_CMDS+="docker exec $container_id nginx -s reload;"
+                fi
+              done
+              if [ ${#containers[@]} -eq 0 ]; then
+                log "未找到任何 Nginx 相关的 Docker 容器"
+              fi
+              step_end "Docker 环境检测"
             fi
-            if systemctl list-units --type=service --state=running | grep -q 'nginx.service'; then
-              log "检测到运行中的 nginx.service，添加重载命令。"
-              RELOAD_CMDS+="sudo systemctl reload nginx;"
+
+            # 检测系统服务（systemd）
+            if command -v systemctl &> /dev/null; then
+              step_start "Systemd 服务检测"
+              # Nginx 检测
+              for service in nginx nginx-full openresty; do
+                if systemctl is-active --quiet "$service"; then
+                  log "检测到运行中的 $service 服务"
+                  RELOAD_CMDS+="sudo systemctl reload $service;"
+                fi
+              done
+
+              # Apache 检测
+              for service in apache2 httpd apache; do
+                if systemctl is-active --quiet "$service"; then
+                  log "检测到运行中的 $service 服务"
+                  RELOAD_CMDS+="sudo systemctl reload $service;"
+                fi
+              done
+
+              # 其他代理服务检测
+              for service in caddy haproxy traefik gost; do
+                if systemctl is-active --quiet "$service"; then
+                  log "检测到运行中的 $service 服务"
+                  if [ "$service" = "gost" ]; then
+                    RELOAD_CMDS+="sudo systemctl restart $service;"  # gost 通常没有 reload
+                  else
+                    RELOAD_CMDS+="sudo systemctl reload $service;"
+                  fi
+                fi
+              done
+              step_end "Systemd 服务检测"
             fi
-            if systemctl list-units --type=service --state=running | grep -q 'apache2.service'; then
-              log "检测到运行中的 apache2.service，添加重载命令。"
-              RELOAD_CMDS+="sudo systemctl reload apache2;"
-            elif systemctl list-units --type=service --state=running | grep -q 'httpd.service'; then
-              log "检测到运行中的 httpd.service，添加重载命令。"
-              RELOAD_CMDS+="sudo systemctl reload httpd;"
+
+            # 检测进程（非 systemd）
+            if ! command -v systemctl &> /dev/null; then
+              step_start "传统进程检测"
+              if pgrep -f "nginx: master process" > /dev/null; then
+                log "检测到 Nginx 主进程"
+                RELOAD_CMDS+="sudo nginx -s reload;"
+              fi
+              
+              if pgrep -f "apache2" > /dev/null || pgrep -f "httpd" > /dev/null; then
+                if [ -f "/etc/debian_version" ]; then
+                  log "检测到 Apache2 进程 (Debian/Ubuntu)"
+                  RELOAD_CMDS+="sudo apache2ctl graceful;"
+                else
+                  log "检测到 HTTPD 进程 (RHEL/CentOS)"
+                  RELOAD_CMDS+="sudo apachectl graceful;"
+                fi
+              fi
+              step_end "传统进程检测"
             fi
-            if systemctl list-units --type=service --state=running | grep -q 'gost.service'; then
-              log "检测到运行中的 gost.service，添加重载命令。"
-              RELOAD_CMDS+="sudo systemctl reload gost;"
-            fi
+
+            # 移除最后一个分号
+            RELOAD_CMDS="${RELOAD_CMDS%;}"
 
             if [ -z "${RELOAD_CMDS}" ]; then
               error "未检测到任何支持的服务 (Docker Nginx, Nginx, Apache, Gost)，无法执行重载。"
             fi
 
+            step_end "检测需要重载的服务"
+
             # --- Core Logic ---
+            step_start "证书扫描和有效期检查"
             get_remaining_days_from_file() {
               local cert_file="$1"
               local expiry_date_str
@@ -113,21 +178,30 @@ jobs:
             log "启动全盘扫描模式 (路径: $CERT_SCAN_PATH)"
             if ! [ -d "$CERT_SCAN_PATH" ]; then error "证书扫描路径 '$CERT_SCAN_PATH' 不存在或不是一个目录。"; fi
 
-            local min_remaining_days=9999
-            local soonest_expiring_cert_file=""
-            local soonest_expiring_domain=""
+            min_remaining_days=9999
+            soonest_expiring_cert_file=""
+            soonest_expiring_domain=""
             
-            local cert_files
-            cert_files=$(find "$CERT_SCAN_PATH" -type f -name "fullchain.pem")
+            cert_files=$(find "$CERT_SCAN_PATH" -type d -maxdepth 1 -mindepth 1 2>/dev/null | while read -r domain_dir; do
+              if [[ -f "$domain_dir/fullchain.pem" ]]; then
+                echo "$domain_dir/fullchain.pem"
+              fi
+            done)
+
             if [[ -z "$cert_files" ]]; then
-              log "在 '$CERT_SCAN_PATH' 下未找到任何 'fullchain.pem' 文件。任务正常结束。"
+              log "在 '$CERT_SCAN_PATH' 的子目录中未找到任何 'fullchain.pem' 文件。"
+              # 检查是否存在任何域名目录
+              domain_count=$(find "$CERT_SCAN_PATH" -type d -maxdepth 1 -mindepth 1 2>/dev/null | wc -l)
+              if [ "$domain_count" -eq 0 ]; then
+                warn "在 '$CERT_SCAN_PATH' 下未找到任何域名目录。"
+              else
+                warn "找到 $domain_count 个域名目录，但都不包含有效的证书文件。"
+              fi
               exit 0
             fi
 
             while read -r cert_file; do
-                local domain_name
                 domain_name=$(basename "$(dirname "$cert_file")")
-                local current_days
                 current_days=$(get_remaining_days_from_file "$cert_file")
                 if [[ "$current_days" -eq 0 ]]; then
                     warn "无法读取证书 '$domain_name' ($cert_file) 的有效期，已跳过。"
@@ -144,8 +218,10 @@ jobs:
             if [[ "$min_remaining_days" -eq 9999 ]]; then error "扫描完成，但未能成功解析任何证书的有效期。"; fi
 
             log "扫描完成。最快过期的域名是 '$soonest_expiring_domain'，剩余 $min_remaining_days 天。"
+            step_end "证书扫描和有效期检查"
             if [[ "$min_remaining_days" -lt "$RENEW_THRESHOLD_DAYS" ]]; then
               warn "存在证书剩余有效期小于 $RENEW_THRESHOLD_DAYS 天，需要触发全局续签。"
+              step_start "证书续签流程"
               log "正在执行续签命令: $RENEW_CMD"
               if ! eval "$RENEW_CMD"; then error "证书续签失败！请检查续签命令和相关日志。"; fi
               log "证书续签命令执行成功。"
@@ -154,7 +230,6 @@ jobs:
               log "所有检测到的服务均已重载。"
               log "等待几秒后进行二次校验..."
               sleep 5
-              local new_remaining_days
               new_remaining_days=$(get_remaining_days_from_file "$soonest_expiring_cert_file")
               log "续签后 '$soonest_expiring_domain' 剩余有效期: $new_remaining_days 天"
               if [[ "$new_remaining_days" -gt "$min_remaining_days" ]]; then
@@ -162,6 +237,7 @@ jobs:
               else
                 error "二次校验失败！续签后证书有效期未延长。请立即手动检查！"
               fi
+              step_end "证书续签流程"
             else
               log "\033[0;32m✅ 所有证书有效期正常，无需续签。\033[0m"
             fi
