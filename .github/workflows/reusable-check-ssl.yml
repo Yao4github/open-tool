@@ -45,7 +45,7 @@ jobs:
             chmod +x /tmp/remote_check_and_renew.sh
             /tmp/remote_check_and_renew.sh
         env:
-          RENEW_THRESHOLD_DAYS: '10' # 续签阈值固定为10天
+          RENEW_THRESHOLD_DAYS: '50' # 续签阈值固定为10天
           REMOTE_SCRIPT: |
             #!/bin/bash
             set -euo pipefail
