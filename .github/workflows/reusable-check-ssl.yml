@@ -45,13 +45,13 @@ jobs:
             chmod +x /tmp/remote_check_and_renew.sh
             /tmp/remote_check_and_renew.sh
         env:
-          RENEW_THRESHOLD_DAYS: '50' # 续签阈值固定为10天
+          RENEW_THRESHOLD_DAYS: '5' # 续签阈值固定为5天
           REMOTE_SCRIPT: |
             #!/bin/bash
             set -euo pipefail
 
             # --- Configuration ---
-            RENEW_THRESHOLD_DAYS="${RENEW_THRESHOLD_DAYS:-10}"
+            RENEW_THRESHOLD_DAYS="${RENEW_THRESHOLD_DAYS:-5}"
             CERT_SCAN_PATH="/etc/letsencrypt/live"
 
             # --- Helper Functions ---
@@ -66,10 +66,10 @@ jobs:
             RENEW_CMD=""
             if command -v certbot &> /dev/null; then
               log "检测到 certbot，将使用 certbot 进行续签。"
-              RENEW_CMD="sudo certbot renew --quiet"
+              RENEW_CMD="sudo certbot renew --force-renewal"
             elif [ -f "$HOME/.acme.sh/acme.sh" ]; then
               log "检测到 acme.sh，将使用 acme.sh 进行续签。"
-              RENEW_CMD="\"$HOME/.acme.sh/acme.sh\" --renew-all --quiet"
+              RENEW_CMD="\"$HOME/.acme.sh/acme.sh\" --renew-all --force-renewal"
             else
               error "未检测到 certbot 或 acme.sh，无法执行续签。"
             fi
