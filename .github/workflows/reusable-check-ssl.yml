@@ -162,7 +162,7 @@ jobs:
               if ! eval "$RENEW_CMD"; then error "证书续签失败！请检查续签命令和相关日志。"; fi
               log "证书续签命令执行成功。"
               log "正在执行重载命令..."
-              if ! eval "$RELOAD_DS"; then error "服务重载失败！请检查相关日志。"; fi
+              if ! eval "$RELOAD_CMDS"; then error "服务重载失败！请检查相关日志。"; fi
               log "所有检测到的服务均已重载。"
               log "等待几秒后进行二次校验..."
               sleep 5
