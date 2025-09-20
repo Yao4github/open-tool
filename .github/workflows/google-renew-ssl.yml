@@ -7,12 +7,6 @@ on:
   schedule:
     - cron: '0 3 * * *' # 每天凌晨3点运行
   workflow_dispatch:
-    inputs:
-      dry_run:
-        description: '演练模式 (Dry-Run): 只检查不续签 (true/false)'
-        required: true
-        default: false
-        type: boolean
 
 jobs:
   dispatch:
@@ -22,8 +16,6 @@ jobs:
     with:
       # 传递固定的参数
       server_name: 'Google Server'
-      # 传递手动触发时输入的参数；调度运行时默认 false
-      dry_run: ${{ github.event.inputs.dry_run || 'false' }}
     secrets:
       SERVER_HOST: ${{ secrets.GOOGLE_HOST }}
       SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}

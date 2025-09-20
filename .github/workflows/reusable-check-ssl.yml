@@ -11,11 +11,6 @@ on:
         description: '服务器的名称'
         required: true
         type: string
-      dry_run:
-        description: '演练模式'
-        required: false
-        type: boolean
-        default: false
     secrets:
       SERVER_HOST:
         required: true
@@ -34,7 +29,6 @@ jobs:
       - name: '步骤 1: 打印任务信息'
         run: |
           echo "🚀 开始为服务器 ${{ inputs.server_name }} 检查 SSL 证书"
-          echo "🔧 演练模式: ${{ inputs.dry_run }}"
 
       - name: '步骤 2: 通过 SSH 执行智能续签脚本'
         uses: appleboy/ssh-action@v1.0.3
@@ -52,14 +46,12 @@ jobs:
             /tmp/remote_check_and_renew.sh
         env:
           RENEW_THRESHOLD_DAYS: '10' # 续签阈值固定为10天
-          DRY_RUN: ${{ inputs.dry_run }}
           REMOTE_SCRIPT: |
             #!/bin/bash
             set -euo pipefail
 
             # --- Configuration ---
             RENEW_THRESHOLD_DAYS="${RENEW_THRESHOLD_DAYS:-10}"
-            DRY_RUN="${DRY_RUN:-false}"
             CERT_SCAN_PATH="/etc/letsencrypt/live"
 
             # --- Helper Functions ---
@@ -154,10 +146,6 @@ jobs:
             log "扫描完成。最快过期的域名是 '$soonest_expiring_domain'，剩余 $min_remaining_days 天。"
             if [[ "$min_remaining_days" -lt "$RENEW_THRESHOLD_DAYS" ]]; then
               warn "存在证书剩余有效期小于 $RENEW_THRESHOLD_DAYS 天，需要触发全局续签。"
-              if [[ "$DRY_RUN" == "true" ]]; then
-                log "Dry-Run 模式：跳过实际续签和重载操作。"
-                exit 0
-              fi
               log "正在执行续签命令: $RENEW_CMD"
               if ! eval "$RENEW_CMD"; then error "证书续签失败！请检查续签命令和相关日志。"; fi
               log "证书续签命令执行成功。"
