@@ -19,5 +19,5 @@ jobs:
     secrets:
       SERVER_HOST: ${{ secrets.UGCAP_HOST }}
       SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}
-      SERVER_SSH_KEY: ${{ secrets.SSH_KEY }}
+      SERVER_SSH_KEY: ${{ secrets.GITH_SSHKEY }}
       SERVER_PORT: ${{ secrets.GOOGLE_PORT }}
