@@ -1,0 +1,133 @@
+# .github/workflows/multi-server-ssl-manager.yml
+# --- 多服务器 SSL 管理工作流 (使用新的 SSL 证书管理工具) ---
+# 同时管理多台服务器的 SSL 证书
+
+name: 'CertGuard: 多服务器 SSL 管理'
+
+on:
+  schedule:
+    # 每周日凌晨1:00 智能检查所有服务器证书并按需续签
+    - cron: '0 1 * * 0'
+  # 允许手动触发
+  workflow_dispatch:
+    inputs:
+      target_server:
+        description: '目标服务器 (all|production|staging|cdn)'
+        required: false
+        type: choice
+        options:
+          - all
+          - production
+          - staging
+          - cdn
+        default: 'all'
+
+jobs:
+  # 生产服务器
+  production-server:
+    if: ${{ inputs.target_server == 'all' || inputs.target_server == 'production' || github.event_name == 'schedule' }}
+    uses: ./.github/workflows/reusable-ssl-cert-manager.yml
+    with:
+      server_name: "生产服务器"
+      threshold_days: 5
+      cert_path: "/etc/letsencrypt/live"
+    secrets:
+      SERVER_HOST: ${{ secrets.PRODUCTION_HOST }}
+      SERVER_USERNAME: ${{ secrets.PRODUCTION_USERNAME }}
+      SERVER_SSH_KEY: ${{ secrets.PRODUCTION_SSH_KEY }}
+      SERVER_PORT: ${{ secrets.PRODUCTION_PORT }}
+
+  # 测试服务器
+  staging-server:
+    if: ${{ inputs.target_server == 'all' || inputs.target_server == 'staging' || github.event_name == 'schedule' }}
+    uses: ./.github/workflows/reusable-ssl-cert-manager.yml
+    with:
+      server_name: "测试服务器"
+      threshold_days: 7  # 测试环境可以设置更宽松的阈值
+      cert_path: "/etc/letsencrypt/live"
+    secrets:
+      SERVER_HOST: ${{ secrets.STAGING_HOST }}
+      SERVER_USERNAME: ${{ secrets.STAGING_USERNAME }}
+      SERVER_SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+      SERVER_PORT: ${{ secrets.STAGING_PORT }}
+
+  # CDN 服务器
+  cdn-server:
+    if: ${{ inputs.target_server == 'all' || inputs.target_server == 'cdn' || github.event_name == 'schedule' }}
+    uses: ./.github/workflows/reusable-ssl-cert-manager.yml
+    with:
+      server_name: "CDN 服务器"
+      threshold_days: 3  # CDN 证书更新频繁，设置较短阈值
+      cert_path: "/opt/ssl/certificates"  # 自定义证书路径
+    secrets:
+      SERVER_HOST: ${{ secrets.CDN_HOST }}
+      SERVER_USERNAME: ${{ secrets.CDN_USERNAME }}
+      SERVER_SSH_KEY: ${{ secrets.CDN_SSH_KEY }}
+      SERVER_PORT: ${{ secrets.CDN_PORT }}
+
+  # 汇总结果并发送通知
+  summary:
+    if: always()
+    needs: [production-server, staging-server, cdn-server]
+    runs-on: ubuntu-latest
+    steps:
+      - name: '汇总执行结果'
+        run: |
+          echo "📊SSL 证书管理任务汇总报告"
+          echo "执行时间: $(date)"
+          echo "智能模式: 检查证书并按需续签"
+          echo "目标服务器: ${{ inputs.target_server || 'all' }}"
+          echo "----------------------------------------"
+          
+          # 检查各服务器执行状态
+          production_status="${{ needs.production-server.result }}"
+          staging_status="${{ needs.staging-server.result }}"
+          cdn_status="${{ needs.cdn-server.result }}"
+          
+          echo "🏭 生产服务器: $production_status"
+          echo "🧪 测试服务器: $staging_status"
+          echo "🚀 CDN 服务器: $cdn_status"
+          
+          # 统计结果
+          total=0
+          success=0
+          failed=0
+          skipped=0
+          
+          for status in "$production_status" "$staging_status" "$cdn_status"; do
+            case "$status" in
+              "success") 
+                ((total++))
+                ((success++))
+                ;;
+              "failure")
+                ((total++))
+                ((failed++))
+                ;;
+              "skipped"|"")
+                ((skipped++))
+                ;;
+            esac
+          done
+          
+          echo "----------------------------------------"
+          echo "📈 执行统计:"
+          echo "  总计: $total"
+          echo "  成功: $success"
+          echo "  失败: $failed"
+          echo "  跳过: $skipped"
+          
+          # 如果有失败，设置失败状态
+          if [ "$failed" -gt 0 ]; then
+            echo "❌ 部分服务器执行失败，请检查详细日志"
+            exit 1
+          else
+            echo "✅ 所有服务器执行成功"
+          fi
+
+      - name: '发送企业微信通知'
+        if: failure()
+        run: |
+          # 这里可以添加企业微信通知逻辑
+          echo "准备发送企业微信通知..."
+          # 示例：curl -X POST "$WECHAT_WEBHOOK" -H "Content-Type: application/json" -d "{...}"

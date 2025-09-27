@@ -1,0 +1,36 @@
+name: 企业微信值班通知
+
+on:
+  schedule:
+    # 每天上午 9:00 (UTC+8 01:00) 发送通知
+    - cron: '0 1 * * *'
+    # 也可以设置多个时间点，比如下午再提醒一次
+    # - cron: '30 6 * * *'  # 每天下午 2:30 (UTC+8 14:30)
+  
+  # 允许手动触发工作流进行测试
+  workflow_dispatch:
+
+jobs:
+  send-notification:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 检出代码
+      uses: actions/checkout@v4
+      
+    - name: 设置 Python 环境
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: 安装 Python 依赖
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r tools/wechat-duty-notification/requirements.txt
+        
+    - name: 运行值班通知脚本
+      env:
+        WECHAT_WEBHOOK: ${{ secrets.WECHAT_WEBHOOK }}
+      run: |
+        cd tools/wechat-duty-notification
+        python wechat_notification.py

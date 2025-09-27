@@ -1,0 +1,93 @@
+# .github/workflows/reusable-ssl-cert-manager.yml
+# --- 可复用工作流 (SSL 证书管理工具 - CertGuard) ---
+# 使用新的 SSL 证书管理工具进行证书检查和续签
+
+name: 'Reusable: SSL 证书管理工具 - CertGuard'
+
+on:
+  workflow_call:
+    inputs:
+      server_name:
+        description: '服务器的名称'
+        required: true
+        type: string
+      domain:
+        description: '指定域名 (可选，留空则检查所有域名)'
+        required: false
+        type: string
+        default: ''
+      threshold_days:
+        description: '续签阈值天数'
+        required: false
+        type: number
+        default: 5
+      cert_path:
+        description: '证书扫描路径'
+        required: false
+        type: string
+        default: '/etc/letsencrypt/live'
+    secrets:
+      SERVER_HOST:
+        required: true
+      SERVER_USERNAME:
+        required: true
+      SERVER_SSH_KEY:
+        required: true
+      SERVER_PORT:
+        required: false
+
+jobs:
+  ssl-cert-management:
+    name: '在 ${{ inputs.server_name }} 上执行 SSL 证书管理'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: '检出代码'
+        uses: actions/checkout@v4
+
+      - name: '上传 SSL 证书管理脚本'
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          source: "tools/ssl-cert-manager/cert_manager.sh"
+          target: "/tmp/ssl-cert-manager/"
+          strip_components: 2
+
+      - name: '执行 SSL 证书管理'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USERNAME }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          port: ${{ secrets.SERVER_PORT || 22 }}
+          script: |
+            # 打印任务信息
+            echo "🚀 开始在服务器 ${{ inputs.server_name }} 上执行 SSL 证书管理"
+            echo "🧠 智能模式: 检查证书并按需续签"
+            echo "🏷️  目标域名: ${{ inputs.domain || '所有域名' }}"
+            echo "⏰ 续签阈值: ${{ inputs.threshold_days }} 天"
+            echo "📂 证书路径: ${{ inputs.cert_path }}"
+            echo "----------------------------------------"
+            
+            # 设置脚本权限
+            chmod +x /tmp/ssl-cert-manager/cert_manager.sh
+            
+            # 构建命令参数
+            CMD_ARGS="--threshold ${{ inputs.threshold_days }} --path ${{ inputs.cert_path }}"
+            
+            # 如果指定了域名，添加域名参数
+            if [ -n "${{ inputs.domain }}" ]; then
+              CMD_ARGS="$CMD_ARGS --domain ${{ inputs.domain }}"
+            fi
+            
+            # 执行 SSL 证书管理脚本
+            echo "🔧 执行命令: /tmp/ssl-cert-manager/cert_manager.sh $CMD_ARGS"
+            /tmp/ssl-cert-manager/cert_manager.sh $CMD_ARGS
+            
+            # 清理临时文件
+            rm -rf /tmp/ssl-cert-manager/
+            
+            echo "✅ SSL 证书管理任务完成"

@@ -1,73 +1,139 @@
-## 自动 SSL 证书续签 (CertGuard - 智能自适应最终版)
+# Open Tool 开源工具集合
 
-本项目包含一个 GitHub Actions 工作流，用于自动检查并续签部署在**多台远程服务器**上的 SSL 证书。它具备以下特性：
+这是一个开源的小工具集合项目，包含各种实用的自动化工具和脚本。每个工具都是独立的，可以单独使用。
 
-- **并行执行**：利用矩阵策略（Matrix Strategy）为您列表中的每台服务器并行执行检查任务。
-- **配置极简**：仅需配置 3 个基础 Secret，无需指定任何命令。
-- **智能检测**：远程脚本会自动检测服务器环境，以确定使用何种续签和重载命令。
-- **模式统一**：默认对所有服务器执行“全盘扫描”模式，检查所有找到的证书。
+## 📁 项目结构
 
-### 快速开始
+```
+.
+├── .github/
+│   └── workflows/           # GitHub Actions 工作流
+├── tools/                   # 工具集合目录
+│   └── [tool-name]/        # 各个工具的独立目录
+│       ├── README.md       # 工具专用说明文档
+│       └── ...            # 工具相关文件
+└── README.md              # 项目总览（本文件）
+```
 
-1.  **确认工作流文件**：确保 `.github/workflows/check-renew-ssl.yml` 是最新版本。
-2.  **设置 GitHub Secrets**：这是使用本方案唯一需要您配置的步骤。
+## 🛠️ 工具列表
 
-### 如何设置 GitHub Secrets
+### 1. [企业微信值班通知工具](tools/wechat-duty-notification/)
 
-最终版的智能工作流仅需 3 个 Secret。请在您的 GitHub 仓库 **Settings** > **Secrets and variables** > **Actions** 页面配置它们：
+**功能**: 自动通过 GitHub Actions 定时发送企业微信值班通知
 
-1.  **`SSH_HOSTS`** (必需)
-    *   **内容**: 一个用**逗号**分隔的服务器 IP 或域名列表。
-    *   **示例**: `192.0.2.1,server2.example.com,192.0.2.3`
+**特性**:
+- 🕒 定时自动发送值班通知
+- 📱 支持企业微信机器人 Markdown 格式消息
+- 👥 支持多种值班排班模式（按日循环、按周固定、特殊日期配置）
+- 🤖 通过 GitHub Actions 自动执行
+- ⚙️ 灵活的配置文件管理
 
-2.  **`SSH_USER`** (必需)
-    *   **内容**: 用于登录所有服务器的**同一个**用户名。
-    *   **示例**: `root` 或 `deployer`
+**适用场景**: 团队值班管理、运维通知、项目排班提醒
 
-3.  **`SSH_KEY`** (必需)
-    *   **内容**: 所有服务器**共享**的 SSH 私钥。
-    *   **示例**: `-----BEGIN OPENSSH PRIVATE KEY...`
+**[→ 查看详细文档](tools/wechat-duty-notification/README.md)**
 
-### 智能检测逻辑 (Auto-Detection Logic)
+### 2. [SSL 证书管理工具 - CertGuard](tools/ssl-cert-manager/)
 
-您无需再手动配置续签和重载命令，远程脚本会自动检测并执行。
+**功能**: 智能自适应的 SSL 证书续签和管理工具
 
-#### 续签命令检测
-脚本会按以下顺序检测续签工具，并使用找到的第一个：
-1.  `certbot`
-2.  `acme.sh` (位于 `~/.acme.sh/`)
+**特性**:
+- 🤖 智能检测证书管理工具（certbot/acme.sh）和服务类型
+- 🔄 基于剩余天数阈值的自动续签机制
+- 🐳 支持 Docker 容器、systemd 服务、传统进程
+- 📊 全面扫描所有证书并报告状态
+- 🚀 支持 GitHub Actions 自动化部署
+- 🔐 通过 SSH 密钥和 Secrets 安全管理
+- 📝 彩色输出和详细的操作日志
 
-#### 重载命令检测
-脚本会检查所有以下支持的服务，并将所有找到的、正在运行的服务都加入到重载队列中，在续签成功后**全部重载**：
--   **Docker Nginx**: 检查名为 `nginx` 的 Docker 容器。
--   **Systemd Nginx**: 检查 `nginx.service`。
--   **Systemd Apache**: 检查 `apache2.service` 或 `httpd.service`。
--   **Systemd Gost**: 检查 `gost.service`。
+**适用场景**: 服务器 SSL 证书管理、自动化运维、多服务器证书续签
 
-### 常见错误排查
+**[→ 查看详细文档](tools/ssl-cert-manager/README.md)**
 
-如果 Actions 失败，请检查以下几点：
+---
 
-1.  **SSH 连接失败**：
-    *   `SSH_HOSTS` 中的 IP/域名是否正确？ `SSH_USER` 是否正确？
-    *   `SSH_KEY` 是否为正确的、完整的、且有权访问所有目标服务器的私钥？
-    *   服务器防火墙是否允许来自 GitHub Actions Runner IP 地址的 SSH 连接？
+## 🚀 快速开始
 
-2.  **命令检测失败或权限不足**:
-    *   确保您的服务器上安装了 `certbot` 或 `acme.sh`。
-    *   确保 `SSH_USER` 用户有权限执行 `sudo` 命令，或有权免密执行 `docker` 命令。
-    *   **解决方案**：为 `SSH_USER` 配置免密 `sudo`。创建一个新文件 `sudo visudo -f /etc/sudoers.d/deployer` 并添加相关命令的免密权限。
+1. **选择需要的工具**: 浏览上面的工具列表，选择适合你需求的工具
+2. **查看工具文档**: 点击工具链接查看详细的使用说明
+3. **按需配置**: 根据工具文档进行配置和部署
+4. **开始使用**: 享受自动化带来的便利！
 
-### 本地快速验证命令
+## 🎯 使用原则
 
-你可以在本地或服务器上使用这些命令快速诊断问题。
+- **模块化设计**: 每个工具都是独立的，互不依赖
+- **详细文档**: 每个工具都有完整的使用文档
+- **安全优先**: 所有敏感信息都通过环境变量或 Secrets 管理
+- **开箱即用**: 最小化配置，快速上手
 
-*   **网络探测模式** (检查 `example.com` 的证书)：
-    ```sh
-    echo | openssl s_client -servername example.com -connect example.com:443 2>/dev/null | openssl x509 -enddate -noout
-    ```
+## 📋 工具分类
 
-*   **本地证书模式** (直接读取文件)：
-    ```sh
-    openssl x509 -enddate -noout -in /etc/letsencrypt/live/example.com/fullchain.pem
-    ```
+### 🔔 通知类工具
+- [企业微信值班通知工具](tools/wechat-duty-notification/) - 自动发送值班通知
+
+### 🔧 运维类工具
+- [SSL 证书管理工具](tools/ssl-cert-manager/) - 智能 SSL 证书续签和管理
+
+### 📊 数据处理工具
+- 敬请期待...
+
+### 🌐 网络工具
+- 敬请期待...
+
+## 🤝 贡献指南
+
+欢迎贡献新的工具或改进现有工具！
+
+### 添加新工具
+
+1. 在 `tools/` 目录下创建新的工具目录
+2. 编写工具代码和配置文件
+3. 创建详细的 `README.md` 文档
+4. 更新本文档的工具列表
+5. 提交 Pull Request
+
+### 工具目录结构规范
+
+```
+tools/your-tool-name/
+├── README.md              # 工具说明文档（必需）
+├── main.py|main.sh        # 主要脚本文件
+├── config.json|.env       # 配置文件（如需要）
+├── requirements.txt       # Python依赖（如适用）
+└── examples/              # 使用示例（可选）
+```
+
+### 文档规范
+
+- 每个工具必须有独立的 README.md
+- 包含功能介绍、快速开始、配置说明、使用示例
+- 中英文皆可，推荐中文
+- 使用清晰的 Markdown 格式
+
+## 📄 许可证
+
+MIT License - 详见 [LICENSE](LICENSE) 文件
+
+## ❓ 常见问题
+
+### Q: 如何选择合适的工具？
+A: 根据你的具体需求浏览工具列表，每个工具都有详细的功能说明和适用场景。
+
+### Q: 工具安全吗？
+A: 所有工具都遵循安全最佳实践，敏感信息通过环境变量或 GitHub Secrets 管理，不会硬编码在代码中。
+
+### Q: 可以修改工具代码吗？
+A: 当然可以！这是开源项目，你可以根据需要修改任何工具的代码。
+
+### Q: 如何报告问题或建议？
+A: 请在 GitHub 上提交 Issue，我们会及时响应。
+
+---
+
+## 📞 联系我们
+
+如果你有任何问题或建议，欢迎：
+- 提交 [GitHub Issue](../../issues)
+- 发起 [Pull Request](../../pulls)
+- 在项目中留言讨论
+
+**让我们一起构建更好的开发工具生态！** 🚀

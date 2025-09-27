@@ -1,0 +1,94 @@
+{
+  "description": "多服务器 SSL 证书管理配置",
+  "default_settings": {
+    "renew_threshold_days": 5,
+    "cert_scan_path": "/etc/letsencrypt/live",
+    "ssh_port": 22,
+    "timeout": 300
+  },
+  "servers": {
+    "production": {
+      "name": "生产服务器",
+      "host": "prod.example.com",
+      "username": "deploy",
+      "ssh_port": 22,
+      "cert_scan_path": "/etc/letsencrypt/live",
+      "renew_threshold_days": 5,
+      "domains": [
+        "example.com",
+        "www.example.com",
+        "api.example.com"
+      ],
+      "services": ["nginx", "apache2"],
+      "custom_reload_cmd": "sudo systemctl reload nginx && sudo systemctl reload apache2",
+      "backup_enabled": true,
+      "notification": {
+        "enabled": true,
+        "channels": ["wechat", "email"]
+      }
+    },
+    "staging": {
+      "name": "测试服务器",
+      "host": "staging.example.com",
+      "username": "deploy",
+      "ssh_port": 22,
+      "cert_scan_path": "/etc/letsencrypt/live",
+      "renew_threshold_days": 7,
+      "domains": [
+        "staging.example.com",
+        "test-api.example.com"
+      ],
+      "services": ["nginx"],
+      "backup_enabled": false,
+      "notification": {
+        "enabled": false
+      }
+    },
+    "cdn": {
+      "name": "CDN 服务器",
+      "host": "cdn.example.com", 
+      "username": "root",
+      "ssh_port": 2222,
+      "cert_scan_path": "/opt/ssl/certificates",
+      "renew_threshold_days": 3,
+      "domains": [
+        "cdn.example.com",
+        "assets.example.com"
+      ],
+      "services": ["caddy"],
+      "custom_reload_cmd": "sudo systemctl reload caddy",
+      "backup_enabled": true,
+      "notification": {
+        "enabled": true,
+        "channels": ["wechat"]
+      }
+    }
+  },
+  "notification_settings": {
+    "wechat": {
+      "webhook_url_env": "WECHAT_WEBHOOK",
+      "message_template": "🔒 SSL证书续签通知\n\n服务器: {{server_name}}\n域名: {{domains}}\n状态: {{status}}\n时间: {{timestamp}}"
+    },
+    "email": {
+      "smtp_host_env": "SMTP_HOST",
+      "smtp_port_env": "SMTP_PORT", 
+      "smtp_user_env": "SMTP_USER",
+      "smtp_pass_env": "SMTP_PASS",
+      "mail_to_env": "MAIL_TO",
+      "subject_template": "SSL证书续签通知 - {{server_name}}",
+      "body_template": "服务器 {{server_name}} 的SSL证书已完成续签操作。\n\n续签域名: {{domains}}\n操作状态: {{status}}\n操作时间: {{timestamp}}\n\n详细日志请查看服务器端记录。"
+    }
+  },
+  "backup_settings": {
+    "retention_days": 30,
+    "compression": true,
+    "encryption": false,
+    "remote_backup": {
+      "enabled": false,
+      "type": "s3",
+      "bucket": "ssl-cert-backups",
+      "access_key_env": "AWS_ACCESS_KEY",
+      "secret_key_env": "AWS_SECRET_KEY"
+    }
+  }
+}

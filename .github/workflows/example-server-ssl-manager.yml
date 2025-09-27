@@ -1,0 +1,51 @@
+# .github/workflows/example-server-ssl-manager.yml
+# --- 示例服务器工作流 (使用新的 SSL 证书管理工具) ---
+# 这是一个示例文件，展示如何使用新的 SSL 证书管理工具
+
+name: 'CertGuard: 示例服务器 SSL 管理'
+
+on:
+  schedule:
+    # 每天凌晨2:30 智能检查证书并按需续签
+    - cron: '30 2 * * *'
+  # 允许手动触发
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: '指定域名 (留空检查所有域名)'
+        required: false
+        type: string
+        default: ''
+      threshold_days:
+        description: '续签阈值天数'
+        required: false
+        type: number
+        default: 5
+
+jobs:
+  # SSL 证书智能管理
+  ssl-management:
+    uses: ./.github/workflows/reusable-ssl-cert-manager.yml
+    with:
+      server_name: "示例服务器"
+      domain: ${{ inputs.domain || '' }}
+      threshold_days: ${{ inputs.threshold_days || 5 }}
+      cert_path: "/etc/letsencrypt/live"
+    secrets:
+      SERVER_HOST: ${{ secrets.EXAMPLE_SERVER_HOST }}
+      SERVER_USERNAME: ${{ secrets.EXAMPLE_SERVER_USERNAME }}
+      SERVER_SSH_KEY: ${{ secrets.EXAMPLE_SERVER_SSH_KEY }}
+      SERVER_PORT: ${{ secrets.EXAMPLE_SERVER_PORT }}
+
+  # 发送通知 (可选)
+  notify:
+    if: failure()
+    needs: [ssl-management]
+    runs-on: ubuntu-latest
+    steps:
+      - name: '发送失败通知'
+        run: |
+          echo "⚠️  SSL 证书管理任务失败"
+          echo "服务器: 示例服务器"
+          echo "时间: $(date)"
+          # 这里可以添加发送通知的逻辑，例如企业微信、邮件等
