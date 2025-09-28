@@ -7,7 +7,7 @@
 import os
 import json
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 import logging
 
@@ -154,7 +154,8 @@ def main():
     schedule_manager = DutyScheduleManager()
     
     # 获取今天和明天的日期
-    today = datetime.now()
+    beijing_tz = timezone(timedelta(hours=8))
+    today = datetime.now(beijing_tz)
     tomorrow = today + timedelta(days=1)
     
     # 获取值班人员信息
