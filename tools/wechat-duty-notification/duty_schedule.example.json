@@ -1,0 +1,73 @@
+{
+  "description": "员工值班排班配置",
+  
+  "daily_rotation": {
+    "description": "按日循环轮值配置",
+    "start_date": "2024-01-01",
+    "employees": [
+      {
+        "name": "张三",
+        "department": "技术部",
+        "phone": "138****1234"
+      },
+      {
+        "name": "李四",
+        "department": "运维部",
+        "phone": "139****5678"
+      },
+      {
+        "name": "王五",
+        "department": "技术部",
+        "phone": "137****9012"
+      },
+      {
+        "name": "赵六",
+        "department": "产品部",
+        "phone": "136****3456"
+      }
+    ]
+  },
+  
+  "weekly_schedule": {
+    "description": "按周固定值班配置 (可选，会覆盖日循环配置)",
+    "monday": {
+      "name": "张三",
+      "department": "技术部",
+      "phone": "138****1234"
+    },
+    "tuesday": {
+      "name": "李四",
+      "department": "运维部",
+      "phone": "139****5678"
+    },
+    "wednesday": {
+      "name": "王五",
+      "department": "技术部",
+      "phone": "137****9012"
+    },
+    "thursday": {
+      "name": "赵六",
+      "department": "产品部",
+      "phone": "136****3456"
+    },
+    "friday": {
+      "name": "张三",
+      "department": "技术部",
+      "phone": "138****1234"
+    }
+  },
+  
+  "special_dates": {
+    "description": "特殊日期值班安排 (会覆盖其他配置)",
+    "2024-12-25": {
+      "name": "值班经理",
+      "department": "管理层",
+      "phone": "188****0000"
+    },
+    "2024-01-01": {
+      "name": "假期值班员",
+      "department": "运维部",
+      "phone": "177****1111"
+    }
+  }
+}

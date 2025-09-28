@@ -61,7 +61,8 @@ class DutyScheduleManager:
     """值班排班管理类"""
     
     def __init__(self, config_file: str = 'duty_schedule.json'):
-        self.config_file = config_file
+        script_dir = os.path.dirname(os.path.realpath(__file__))
+        self.config_file = os.path.join(script_dir, config_file)
         self.duty_schedule = self.load_schedule()
     
     def load_schedule(self) -> Dict:
@@ -132,6 +133,13 @@ class DutyScheduleManager:
         
         return info
 
+    def get_rotation_string(self) -> str:
+        """获取值班轮换顺序字符串"""
+        if 'daily_rotation' in self.duty_schedule and self.duty_schedule['daily_rotation']['employees']:
+            employees = self.duty_schedule['daily_rotation']['employees']
+            names = [emp.get('name', '未知') for emp in employees]
+            return ' -> '.join(names)
+        return ""
 
 def main():
     """主函数"""
@@ -153,6 +161,9 @@ def main():
     today_duty = schedule_manager.get_duty_person(today)
     tomorrow_duty = schedule_manager.get_duty_person(tomorrow)
     
+    # 获取值班轮换顺序
+    rotation_string = schedule_manager.get_rotation_string()
+    
     # 格式化消息内容
     message_content = f"""# 📋 值班通知
 
@@ -163,6 +174,9 @@ def main():
 ---
 ⏰ 通知时间: {today.strftime('%Y-%m-%d %H:%M:%S')}
 🤖 自动发送 by GitHub Actions"""
+
+    if rotation_string:
+        message_content += f"\n\n值班顺序: {rotation_string}"
     
     # 发送通知
     success = notifier.send_markdown_message(message_content)
