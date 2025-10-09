@@ -5,9 +5,9 @@
 name: 'CertGuard: 多服务器 SSL 管理'
 
 on:
-  schedule:
+  # schedule:
     # 每周日凌晨1:00 智能检查所有服务器证书并按需续签
-    - cron: '0 1 * * 0'
+    # - cron: '0 1 * * 0'
   # 允许手动触发
   workflow_dispatch:
     inputs:
