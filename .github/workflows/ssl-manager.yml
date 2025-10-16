@@ -1,0 +1,82 @@
+# .github/workflows/ugcap-renew-ssl.yml
+# --- 父工作流 (UGCAP 服务器专用) ---
+
+name: 'CertGuard: 续签 UG 服务器 SSL'
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # 每天凌晨3点运行
+  workflow_dispatch:
+
+jobs:
+  cap-ssl-check:
+    name: '调度到可复用工作流-CAP-1'
+    # 调用子工作流
+    uses: ./.github/workflows/reusable-check-ssl.yml
+    with:
+      server_name: 'CAP SERVER'
+    secrets:
+      SERVER_HOST: ${{ secrets.UGCAP_HOST }}
+      SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}
+      SERVER_SSH_KEY: ${{ secrets.GITH_SSHKEY }}
+      SERVER_PORT: ${{ secrets.GOOGLE_PORT }}
+
+  kbs-ssl-check:
+    name: '调度到可复用工作流-KBS-2'
+    # 调用子工作流
+    uses: ./.github/workflows/reusable-check-ssl.yml
+    with:
+      server_name: 'KBS SERVER'
+    secrets:
+      SERVER_HOST: ${{ secrets.KBS_HOST }}
+      SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}
+      SERVER_SSH_KEY: ${{ secrets.GITH_SSHKEY }}
+      SERVER_PORT: ${{ secrets.GOOGLE_PORT }}
+
+  yel-ssl-check:
+    name: '调度到可复用工作流-YEL-3'
+    # 调用子工作流
+    uses: ./.github/workflows/reusable-check-ssl.yml
+    with:
+      server_name: 'YEL SERVER'
+    secrets:
+      SERVER_HOST: ${{ secrets.YEL_HOST }}
+      SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}
+      SERVER_SSH_KEY: ${{ secrets.GITH_SSHKEY }}
+      SERVER_PORT: ${{ secrets.GOOGLE_PORT }}
+
+  smn-ssl-check:
+    name: '调度到可复用工作流-SMN-4'
+    # 调用子工作流
+    uses: ./.github/workflows/reusable-check-ssl.yml
+    with:
+      server_name: 'SMN SERVER'
+    secrets:
+      SERVER_HOST: ${{ secrets.SMN_HOST }}
+      SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}
+      SERVER_SSH_KEY: ${{ secrets.GITH_SSHKEY }}
+      SERVER_PORT: ${{ secrets.GOOGLE_PORT }}
+
+  smy-ssl-check:
+    name: '调度到可复用工作流-SMY-5'
+    # 调用子工作流
+    uses: ./.github/workflows/reusable-check-ssl.yml
+    with:
+      server_name: 'SMY SERVER'
+    secrets:
+      SERVER_HOST: ${{ secrets.SMY_HOST }}
+      SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}
+      SERVER_SSH_KEY: ${{ secrets.GITH_SSHKEY }}
+      SERVER_PORT: ${{ secrets.GOOGLE_PORT }}
+
+  e4m-ssl-check:
+    name: '调度到可复用工作流-E4M-6'
+    # 调用子工作流
+    uses: ./.github/workflows/reusable-check-ssl.yml
+    with:
+      server_name: 'E4M SERVER'
+    secrets:
+      SERVER_HOST: ${{ secrets.E4M_HOST }}
+      SERVER_USERNAME: ${{ secrets.GOOGLE_USER }}
+      SERVER_SSH_KEY: ${{ secrets.GITH_SSHKEY }}
+      SERVER_PORT: ${{ secrets.GOOGLE_PORT }}
